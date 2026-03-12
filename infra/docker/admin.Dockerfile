@@ -11,7 +11,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 
-COPY --from=builder /app /app
+COPY --from=builder --chown=node:node /app /app
+USER node
 
 EXPOSE 3001
 CMD ["npm", "run", "start", "-w", "@globe/admin"]

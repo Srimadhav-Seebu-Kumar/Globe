@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { health, listListings, listMarkets, login, setReviewDecision } from "../src/handlers.js";
+import { health, listAlerts, listListings, listMarkets, listParcels, login, setReviewDecision } from "../src/handlers.js";
 
 const restoreEnv = (key: "APP_OPERATOR_EMAIL" | "APP_OPERATOR_PASSWORD", value: string | undefined): void => {
   if (typeof value === "undefined") {
@@ -41,6 +41,35 @@ test("listListings filters by state and market", () => {
 
   assert.equal(response.data.length > 0, true);
   assert.equal(response.data.every((item) => item.marketId === "m-dubai" && item.state === "closed"), true);
+});
+
+test("listMarkets state filter applies OR semantics and pagination metadata", () => {
+  const url = new URL("http://localhost/v1/markets?state=ask&state=closed&limit=2");
+  const response = listMarkets(url);
+
+  assert.equal(response.data.length, 2);
+  assert.equal(response.meta.limit, 2);
+  assert.equal(typeof response.meta.hasMore, "boolean");
+});
+
+test("listParcels defaults to legal-display-only and masks restricted parcels when included", () => {
+  const defaultUrl = new URL("http://localhost/v1/parcels?marketId=m-london");
+  const defaultResponse = listParcels(defaultUrl);
+  assert.equal(defaultResponse.data.length, 0);
+
+  const inclusiveUrl = new URL("http://localhost/v1/parcels?marketId=m-london&legalDisplayOnly=false");
+  const inclusiveResponse = listParcels(inclusiveUrl);
+  assert.equal(inclusiveResponse.data.length, 1);
+  assert.equal(inclusiveResponse.data[0]?.canonicalParcelId, "REDACTED");
+  assert.equal(inclusiveResponse.data[0]?.title, "Restricted parcel");
+});
+
+test("listAlerts no longer exposes watchlist identifiers", () => {
+  const url = new URL("http://localhost/v1/alerts?marketId=m-dubai");
+  const response = listAlerts(url);
+  assert.equal(response.data.length > 0, true);
+  const keys = Object.keys(response.data[0] ?? {});
+  assert.equal(keys.includes("watchlistId"), false);
 });
 
 test("setReviewDecision mutates queue status", () => {

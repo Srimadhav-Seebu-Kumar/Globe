@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS listing (
   listing_ref TEXT,
   title TEXT,
   status TEXT NOT NULL DEFAULT 'active',
-  price_state price_state NOT NULL CHECK (price_state IN ('ask', 'broker_verified')),
+  price_state price_state NOT NULL CHECK (price_state IN ('ask', 'estimate', 'broker_verified')),
   price_amount NUMERIC(18, 2) NOT NULL,
   currency_code CHAR(3) NOT NULL,
   listed_at TIMESTAMPTZ,

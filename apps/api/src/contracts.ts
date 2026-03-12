@@ -22,6 +22,7 @@ export interface MarketDto {
   name: string;
   countryCode: string;
   region: string;
+  timezone: string;
   center: PointDto;
   coverageTier: CoverageTier;
   freshness: FreshnessTier;
@@ -67,7 +68,6 @@ export interface ListingDto {
 export interface AlertDto {
   id: string;
   marketId: string;
-  watchlistId: string;
   title: string;
   ruleType: "new_listing" | "price_change" | "planning_signal";
   isActive: boolean;
@@ -123,6 +123,9 @@ export interface CollectionResponse<T> {
   data: T[];
   meta: {
     total: number;
+    limit?: number;
+    offset?: number;
+    hasMore?: boolean;
     filtersApplied?: Record<string, string | string[]>;
   };
 }

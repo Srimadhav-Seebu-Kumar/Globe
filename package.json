@@ -15,9 +15,9 @@
     "build:packages": "npm run build -w @globe/types -w @globe/geo -w @globe/config -w @globe/ui",
     "build:apps": "npm run build -w @globe/api -w @globe/web -w @globe/admin",
     "build": "npm run build:packages && npm run build:apps",
-    "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run build:packages && npm run lint --workspaces --if-present",
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:packages && npm run test --workspaces --if-present",
     "dev:web": "npm run build:packages && npm run dev -w @globe/web",
     "dev:admin": "npm run build:packages && npm run dev -w @globe/admin",
     "dev:api": "npm run build:packages && npm run dev -w @globe/api"

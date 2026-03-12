@@ -20,6 +20,7 @@ interface MarketDto {
   name: string;
   countryCode: string;
   region: string;
+  timezone: string;
   center: PointDto;
   coverageTier: CoverageTier;
   freshness: (typeof FRESHNESS_TIERS)[number];
@@ -65,7 +66,6 @@ interface ListingDto {
 interface AlertDto {
   id: string;
   marketId: string;
-  watchlistId: string;
   title: string;
   ruleType: "new_listing" | "price_change" | "planning_signal";
   isActive: boolean;
@@ -90,9 +90,33 @@ interface CollectionResponse<T> {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
-const formatDateTime = (value: string): string => new Date(value).toLocaleString();
+const formatDateTime = (value: string, timezone?: string): string => {
+  const parsed = new Date(value);
+  if (!timezone) {
+    return parsed.toLocaleString();
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timezone
+  }).format(parsed);
+};
 
 const priceStateLabel = (state: PriceState): string => state.replaceAll("_", " ");
+const coverageTierLabel = (value: CoverageTier): string =>
+  value.replace("tier_a_", "Tier A ").replace("tier_b_", "Tier B ").replace("tier_c_", "Tier C ").replaceAll("_", " ");
+
+const useDebouncedValue = <T,>(value: T, delayMs: number): T => {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timeout);
+  }, [delayMs, value]);
+
+  return debounced;
+};
 
 const fetchCollection = async <T,>(path: string, signal?: AbortSignal): Promise<T[]> => {
   const requestInit: RequestInit = { cache: "no-store" };
@@ -122,10 +146,12 @@ export const LandIntelligenceApp = () => {
   const [stateFilter, setStateFilter] = useState<PriceState[]>([...PRICE_STATES]);
   const [minConfidence, setMinConfidence] = useState<(typeof CONFIDENCE_LABELS)[number]>("low");
   const [windowDays, setWindowDays] = useState<number>(90);
-  const [legalDisplayOnly, setLegalDisplayOnly] = useState<boolean>(false);
+  const [legalDisplayOnly, setLegalDisplayOnly] = useState<boolean>(true);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const debouncedWindowDays = useDebouncedValue(windowDays, 250);
 
   const selectedMarket = useMemo(
     () => markets.find((market) => market.id === selectedMarketId) ?? null,
@@ -141,8 +167,8 @@ export const LandIntelligenceApp = () => {
 
       try {
         const params = new URLSearchParams();
-        if (query.trim()) {
-          params.set("query", query.trim());
+        if (debouncedQuery.trim()) {
+          params.set("query", debouncedQuery.trim());
         }
 
         for (const tier of coverageFilter) {
@@ -154,7 +180,8 @@ export const LandIntelligenceApp = () => {
         }
 
         params.set("minConfidence", minConfidence);
-        params.set("windowDays", String(windowDays));
+        params.set("windowDays", String(debouncedWindowDays));
+        params.set("limit", "100");
 
         const data = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`, controller.signal);
         setMarkets(data);
@@ -184,7 +211,7 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, minConfidence, query, stateFilter, windowDays]);
+  }, [coverageFilter, debouncedQuery, debouncedWindowDays, minConfidence, stateFilter]);
 
   useEffect(() => {
     if (!selectedMarketId) {
@@ -203,18 +230,21 @@ export const LandIntelligenceApp = () => {
         for (const tier of coverageFilter) {
           parcelParams.append("coverageTier", tier);
         }
+        parcelParams.set("limit", "300");
 
-        const listingParams = new URLSearchParams({ marketId: selectedMarketId, windowDays: String(windowDays) });
+        const listingParams = new URLSearchParams({ marketId: selectedMarketId, windowDays: String(debouncedWindowDays) });
         for (const state of stateFilter) {
           listingParams.append("state", state);
         }
+        listingParams.set("limit", "300");
 
-        const eventParams = new URLSearchParams({ marketId: selectedMarketId, windowDays: String(windowDays) });
+        const eventParams = new URLSearchParams({ marketId: selectedMarketId, windowDays: String(debouncedWindowDays) });
+        eventParams.set("limit", "100");
 
         const [parcelRows, listingRows, alertRows, eventRows] = await Promise.all([
           fetchCollection<ParcelDto>(`/v1/parcels?${parcelParams.toString()}`, controller.signal),
           fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`, controller.signal),
-          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true`, controller.signal),
+          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true&limit=50`, controller.signal),
           fetchCollection<ActivityEventDto>(`/v1/events?${eventParams.toString()}`, controller.signal)
         ]);
 
@@ -236,7 +266,7 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, legalDisplayOnly, selectedMarketId, stateFilter, windowDays]);
+  }, [coverageFilter, debouncedWindowDays, legalDisplayOnly, selectedMarketId, stateFilter]);
 
   const toggleCoverageTier = (tier: CoverageTier) => {
     setCoverageFilter((previous) => {
@@ -355,6 +385,7 @@ export const LandIntelligenceApp = () => {
           <span>Only legal-display parcels</span>
         </label>
 
+        <p className="muted-text">Restricted parcels are masked by policy.</p>
         {error ? <p className="error-text">{error}</p> : null}
       </aside>
 
@@ -369,7 +400,7 @@ export const LandIntelligenceApp = () => {
             <div className="drawer-grid">
               <div className="stat-card">
                 <p>Coverage</p>
-                <strong>{selectedMarket.coverageTier}</strong>
+                <strong>{coverageTierLabel(selectedMarket.coverageTier)}</strong>
               </div>
               <div className="stat-card">
                 <p>Activity score</p>
@@ -383,6 +414,10 @@ export const LandIntelligenceApp = () => {
                 <p>Closed deals</p>
                 <strong>{formatNumber(selectedMarket.closedTransactions)}</strong>
               </div>
+              <div className="stat-card">
+                <p>Timezone</p>
+                <strong>{selectedMarket.timezone}</strong>
+              </div>
             </div>
 
             <h3 className="section-title" style={{ marginTop: 14 }}>
@@ -391,11 +426,9 @@ export const LandIntelligenceApp = () => {
             <div className="scroll-panel">
               {parcels.map((parcel) => (
                 <article key={parcel.id} className="list-card">
-                  <strong>{parcel.title}</strong>
-                  <p>{parcel.canonicalParcelId}</p>
-                  <p>
-                    {formatNumber(parcel.areaSqm)} sqm | {parcel.zoningCode} | {parcel.legalDisplayAllowed ? "Display allowed" : "Display masked"}
-                  </p>
+                  <strong>{parcel.legalDisplayAllowed ? parcel.title : "Restricted parcel"}</strong>
+                  <p>{parcel.legalDisplayAllowed ? parcel.canonicalParcelId : "REDACTED"}</p>
+                  <p>{parcel.legalDisplayAllowed ? `${formatNumber(parcel.areaSqm)} sqm | ${parcel.zoningCode}` : "Display masked by policy"}</p>
                 </article>
               ))}
               {parcels.length === 0 ? <p className="muted-text">No parcels match current filters.</p> : null}
@@ -417,6 +450,7 @@ export const LandIntelligenceApp = () => {
                     {listing.sourceName}
                     {listing.brokerName ? ` | ${listing.brokerName}` : ""}
                   </p>
+                  <p>Observed {formatDateTime(listing.observedAt, selectedMarket.timezone)}</p>
                 </article>
               ))}
             </div>
@@ -429,7 +463,7 @@ export const LandIntelligenceApp = () => {
                 <article key={alert.id} className="list-card">
                   <strong>{alert.title}</strong>
                   <p>{alert.ruleType}</p>
-                  <p>{alert.lastTriggeredAt ? formatDateTime(alert.lastTriggeredAt) : "Never triggered"}</p>
+                  <p>{alert.lastTriggeredAt ? formatDateTime(alert.lastTriggeredAt, selectedMarket.timezone) : "Never triggered"}</p>
                 </article>
               ))}
             </div>
@@ -462,7 +496,7 @@ export const LandIntelligenceApp = () => {
 
       <footer className="ticker">
         {events.length > 0
-          ? events.map((event) => `${formatDateTime(event.occurredAt)} | ${event.summary}`).join("  ||  ")
+          ? events.map((event) => `${formatDateTime(event.occurredAt, selectedMarket?.timezone)} | ${event.summary}`).join("  ||  ")
           : "No activity events in selected window."}
       </footer>
     </main>

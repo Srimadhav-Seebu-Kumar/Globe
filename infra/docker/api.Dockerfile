@@ -11,7 +11,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=4000
 
-COPY --from=builder /app /app
+COPY --from=builder --chown=node:node /app /app
+USER node
 
 EXPOSE 4000
 CMD ["npm", "run", "start", "-w", "@globe/api"]

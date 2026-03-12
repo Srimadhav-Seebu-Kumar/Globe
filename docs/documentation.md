@@ -19,6 +19,10 @@
 - 2026-03-13 00:45 GST: Tightened auth/session security posture (constant-time hash compare, stale login-attempt cleanup, and admin token persistence moved to sessionStorage with legacy migration).
 - 2026-03-13 00:49 GST: Reworked web globe basemap rendering to include built-in landmass polygons and outlines so the globe remains visibly populated without third-party style dependencies.
 - 2026-03-13 00:50 GST: Fixed production runtime packaging bug by switching shared package exports to `dist` artifacts, adding explicit workspace package build orchestration, and adjusting API build path mapping.
+- 2026-03-13 01:15 GST: Applied cross-role product/security review fixes: legal-display default enforcement + parcel redaction, alert metadata hardening, pagination support, market state OR filtering, query/window debounce, timezone surfacing, and stronger HTTP headers.
+- 2026-03-13 01:15 GST: Upgraded API auth/runtime posture with signed stateless bearer tokens, proxy trust guard (`APP_TRUST_PROXY`), and persistent review-decision store backed by `logs/review-decisions.json`.
+- 2026-03-13 01:15 GST: Hardened deployment containers to run as non-root user (`node`) in runtime stages.
+- 2026-03-13 01:22 GST: Added targeted API tests for parcel legal masking defaults, alert payload redaction, and pagination metadata behavior.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -38,10 +42,14 @@
 - 2026-03-13 00:49 GST: Runtime smoke checks passed for dev servers (`api`/`web`/`admin` each returned `200`, shell content checks passed, API login + authenticated admin endpoints validated).
 - 2026-03-13 00:50 GST: Verified compiled API runtime via `node apps/api/dist/server.js`; `/health` and `/v1/auth/login` succeeded after shared package export fixes.
 - 2026-03-13 00:50 GST: `npm audit --omit=dev` reports 0 vulnerabilities.
+- 2026-03-13 01:15 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, and `npm audit --omit=dev`; all passed.
+- 2026-03-13 01:15 GST: Runtime API checks passed for legal-display masking (`/v1/parcels` default and inclusive modes), alert payload shape (`watchlistId` removed), pagination meta (`limit/hasMore`), and authenticated admin source access.
+- 2026-03-13 01:15 GST: Runtime smoke checks passed for local dev servers (`api`/`web`/`admin` each returned `200`, web/admin shell content checks passed).
+- 2026-03-13 01:22 GST: Re-ran full command stack again (`lint`, `typecheck`, `test`, `build`, `audit`) and repeated runtime smoke checks for API/web/admin plus API contract probes; all passed.
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
-- Admin review decisions persist only in process memory until API restart.
-- API auth/session state is in-memory only; move to Redis or DB-backed session store for distributed/runtime durability.
+- Review decisions are now persisted to local disk (`logs/review-decisions.json`) but not yet moved to Postgres/Redis for HA durability.
+- Auth uses signed stateless bearer tokens; revocation list/session analytics are not yet centralized in Redis.
 - AWS deployment workflows are committed, but first deployment requires valid AWS API credentials (access key/secret or SSO session) and GitHub repository secrets.
 - Production `npm run start -w @globe/web` and `npm run start -w @globe/admin` could not be fully smoke-automated in this session due execution policy blocking those background command patterns; dev/runtime + build verification is passing.

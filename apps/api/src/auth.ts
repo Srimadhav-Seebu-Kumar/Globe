@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
 export interface AuthSession {
@@ -12,8 +12,8 @@ interface LoginAttempt {
   windowStartedAt: number;
 }
 
-const sessions = new Map<string, AuthSession>();
 const loginAttempts = new Map<string, LoginAttempt>();
+let generatedTokenSecret: string | null = null;
 
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 8;
@@ -38,19 +38,28 @@ const getSessionTtlMs = (): number => {
   return Math.round(configuredMinutes) * 60 * 1000;
 };
 
+const getTokenSecret = (): string => {
+  const configured = process.env.APP_AUTH_TOKEN_SECRET?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const fallback = process.env.APP_OPERATOR_PASSWORD?.trim();
+  if (fallback) {
+    return fallback;
+  }
+
+  if (!generatedTokenSecret) {
+    generatedTokenSecret = randomBytes(24).toString("hex");
+  }
+
+  return generatedTokenSecret;
+};
+
 const safeEqual = (left: string, right: string): boolean => {
   const leftHash = createHash("sha256").update(left).digest();
   const rightHash = createHash("sha256").update(right).digest();
   return timingSafeEqual(leftHash, rightHash);
-};
-
-const clearExpiredSessions = (): void => {
-  const now = Date.now();
-  for (const [token, session] of sessions) {
-    if (session.expiresAt <= now) {
-      sessions.delete(token);
-    }
-  }
 };
 
 const clearExpiredLoginAttempts = (now: number): void => {
@@ -61,9 +70,59 @@ const clearExpiredLoginAttempts = (now: number): void => {
   }
 };
 
+const encodeToken = (session: AuthSession): string => {
+  const payload = {
+    email: session.email,
+    role: session.role,
+    exp: session.expiresAt
+  };
+  const payloadEncoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", getTokenSecret()).update(payloadEncoded).digest("base64url");
+  return `${payloadEncoded}.${signature}`;
+};
+
+const decodeToken = (token: string): AuthSession | null => {
+  const [payloadEncoded, signature] = token.split(".");
+  if (!payloadEncoded || !signature) {
+    return null;
+  }
+
+  const expectedSignature = createHmac("sha256", getTokenSecret()).update(payloadEncoded).digest("base64url");
+  if (!safeEqual(signature, expectedSignature)) {
+    return null;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString("utf8")) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+
+  const data = payload as { email?: unknown; role?: unknown; exp?: unknown };
+  if (typeof data.email !== "string" || data.role !== "operator" || typeof data.exp !== "number") {
+    return null;
+  }
+
+  if (data.exp <= Date.now()) {
+    return null;
+  }
+
+  return {
+    email: data.email,
+    role: "operator",
+    expiresAt: data.exp
+  };
+};
+
 export const getClientKey = (request: IncomingMessage): string => {
+  const trustProxy = process.env.APP_TRUST_PROXY === "true";
   const forwardedFor = request.headers["x-forwarded-for"];
-  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+  if (trustProxy && typeof forwardedFor === "string" && forwardedFor.trim()) {
     return forwardedFor.split(",")[0]?.trim() ?? "unknown";
   }
 
@@ -113,8 +172,7 @@ export const loginWithCredentials = (
 
   loginAttempts.delete(clientKey);
 
-  const token = randomBytes(24).toString("hex");
-  sessions.set(token, {
+  const token = encodeToken({
     email: credentials.email,
     role: "operator",
     expiresAt: now + getSessionTtlMs()
@@ -131,8 +189,6 @@ export const loginWithCredentials = (
 export const authorizeRequest = (
   request: IncomingMessage
 ): { ok: true; session: AuthSession } | { ok: false; errorCode: "missing_token" | "invalid_token" } => {
-  clearExpiredSessions();
-
   const authorizationHeader = request.headers.authorization;
   if (!authorizationHeader || !authorizationHeader.startsWith("Bearer ")) {
     return { ok: false, errorCode: "missing_token" };
@@ -143,7 +199,7 @@ export const authorizeRequest = (
     return { ok: false, errorCode: "missing_token" };
   }
 
-  const session = sessions.get(token);
+  const session = decodeToken(token);
   if (!session) {
     return { ok: false, errorCode: "invalid_token" };
   }
