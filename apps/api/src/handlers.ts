@@ -1,3 +1,6 @@
+import { CONFIDENCE_LABELS, COVERAGE_TIERS, PRICE_STATES, type ConfidenceLabel, type CoverageTier, type PriceState } from "@globe/types";
+
+import { loginWithCredentials } from "./auth.js";
 import type {
   ActivityEventDto,
   CollectionResponse,
@@ -5,16 +8,37 @@ import type {
   MarketDto,
   ReviewItemDto
 } from "./contracts.js";
-import { activityEvents, alerts, listings, localAccount, markets, parcels, reviewQueue, sourceHealthRows } from "./data.js";
+import { activityEvents, alerts, listings, markets, parcels, reviewQueue, sourceHealthRows } from "./data.js";
+
+const confidenceSet = new Set<string>(CONFIDENCE_LABELS);
+const coverageTierSet = new Set<string>(COVERAGE_TIERS);
+const priceStateSet = new Set<string>(PRICE_STATES);
 
 const parseMultiValue = (url: URL, key: string): string[] => {
   const repeated = url.searchParams.getAll(key).filter(Boolean);
-  if (repeated.length > 0) {
-    return repeated;
+  const raw = repeated.length > 0 ? repeated : [url.searchParams.get(key) ?? ""];
+
+  const values = raw
+    .flatMap((entry) => entry.split(","))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(values));
+};
+
+const parseCoverageTiers = (url: URL): CoverageTier[] =>
+  parseMultiValue(url, "coverageTier").filter((value): value is CoverageTier => coverageTierSet.has(value));
+
+const parsePriceStates = (url: URL): PriceState[] =>
+  parseMultiValue(url, "state").filter((value): value is PriceState => priceStateSet.has(value));
+
+const parseConfidence = (url: URL): ConfidenceLabel => {
+  const requested = (url.searchParams.get("minConfidence") ?? "low").trim();
+  if (confidenceSet.has(requested)) {
+    return requested as ConfidenceLabel;
   }
 
-  const combined = url.searchParams.get(key);
-  return combined ? combined.split(",").map((value) => value.trim()).filter(Boolean) : [];
+  return "low";
 };
 
 const rankConfidence = (label: MarketDto["confidence"]): number => {
@@ -59,19 +83,19 @@ export const health = () => ({
 
 export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
   const query = (url.searchParams.get("query") ?? "").trim().toLowerCase();
-  const coverageTier = parseMultiValue(url, "coverageTier");
-  const requiredStates = parseMultiValue(url, "state");
-  const minConfidence = (url.searchParams.get("minConfidence") ?? "low") as MarketDto["confidence"];
+  const coverageTier = parseCoverageTiers(url);
+  const requiredStates = parsePriceStates(url);
+  const minConfidence = parseConfidence(url);
   const windowDays = parseWindowDays(url);
 
-  const marketStateMap = new Map<string, Set<string>>();
+  const marketStateMap = new Map<string, Set<PriceState>>();
   for (const listing of listings) {
     if (!withinWindow(listing.observedAt, windowDays)) {
       continue;
     }
 
     if (!marketStateMap.has(listing.marketId)) {
-      marketStateMap.set(listing.marketId, new Set<string>());
+      marketStateMap.set(listing.marketId, new Set<PriceState>());
     }
 
     marketStateMap.get(listing.marketId)?.add(listing.state);
@@ -92,7 +116,7 @@ export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
       }
 
       if (requiredStates.length > 0) {
-        const availableStates = marketStateMap.get(market.id) ?? new Set<string>();
+        const availableStates = marketStateMap.get(market.id) ?? new Set<PriceState>();
         for (const state of requiredStates) {
           if (!availableStates.has(state)) {
             return false;
@@ -115,7 +139,7 @@ export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
 
 export const listParcels = (url: URL) => {
   const marketId = url.searchParams.get("marketId");
-  const coverageTier = parseMultiValue(url, "coverageTier");
+  const coverageTier = parseCoverageTiers(url);
   const legalDisplayOnly = url.searchParams.get("legalDisplayOnly") === "true";
 
   const filtered = parcels.filter((parcel) => {
@@ -144,7 +168,7 @@ export const listParcels = (url: URL) => {
 export const listListings = (url: URL) => {
   const marketId = url.searchParams.get("marketId");
   const parcelId = url.searchParams.get("parcelId");
-  const states = parseMultiValue(url, "state");
+  const states = parsePriceStates(url);
   const windowDays = parseWindowDays(url);
 
   const filtered = listings
@@ -267,21 +291,25 @@ export const listActivityEvents = (url: URL): CollectionResponse<ActivityEventDt
   });
 };
 
-export const login = (body: unknown): LoginResponseDto => {
+export const login = (body: unknown, clientKey: string): LoginResponseDto => {
   if (!body || typeof body !== "object") {
-    return { ok: false, token: null, email: null, role: null };
+    return { ok: false, token: null, email: null, role: null, errorCode: "invalid_credentials" };
   }
 
   const payload = body as { email?: string; password?: string };
+  if (typeof payload.email !== "string" || typeof payload.password !== "string") {
+    return { ok: false, token: null, email: null, role: null, errorCode: "invalid_credentials" };
+  }
 
-  if (payload.email !== localAccount.email || payload.password !== localAccount.password) {
-    return { ok: false, token: null, email: null, role: null };
+  const result = loginWithCredentials(payload.email, payload.password, clientKey);
+  if (!result.ok) {
+    return { ok: false, token: null, email: null, role: null, errorCode: result.errorCode };
   }
 
   return {
     ok: true,
-    token: "local-dev-session-token",
-    email: localAccount.email,
-    role: "operator"
+    token: result.token,
+    email: result.email,
+    role: result.role
   };
 };

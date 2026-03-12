@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { getClientKey } from "./auth.js";
 import {
   health,
   listActivityEvents,
@@ -29,6 +30,7 @@ interface RouteDefinition {
   pattern: RegExp;
   description: string;
   handler: RouteHandler;
+  requiresAuth?: boolean;
 }
 
 export const routes: RouteDefinition[] = [
@@ -72,13 +74,15 @@ export const routes: RouteDefinition[] = [
     method: "GET",
     pattern: /^\/v1\/admin\/sources$/,
     description: "Source health telemetry",
-    handler: ({ url }) => listSourceHealth(url)
+    handler: ({ url }) => listSourceHealth(url),
+    requiresAuth: true
   },
   {
     method: "GET",
     pattern: /^\/v1\/admin\/reviews$/,
     description: "Review queue",
-    handler: ({ url }) => listReviewQueue(url)
+    handler: ({ url }) => listReviewQueue(url),
+    requiresAuth: true
   },
   {
     method: "POST",
@@ -91,13 +95,14 @@ export const routes: RouteDefinition[] = [
 
       const decision = params.decision === "approve" ? "approved" : "rejected";
       return setReviewDecision(params.id, decision);
-    }
+    },
+    requiresAuth: true
   },
   {
     method: "POST",
     pattern: /^\/v1\/auth\/login$/,
     description: "Local login endpoint",
-    handler: ({ body }) => login(body)
+    handler: ({ body, request }) => login(body, getClientKey(request))
   }
 ];
 
@@ -134,21 +139,36 @@ export const resolveRoute = (request: IncomingMessage): ResolvedRoute | undefine
   return undefined;
 };
 
-const setCorsHeaders = (response: ServerResponse): void => {
-  response.setHeader("access-control-allow-origin", "*");
+const allowedOrigins = (process.env.APP_ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:3001")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const setCorsHeaders = (request: IncomingMessage, response: ServerResponse): void => {
+  const origin = request.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("vary", "origin");
+  }
+
   response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
   response.setHeader("access-control-allow-headers", "content-type,authorization");
 };
 
-export const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
+export const writeJson = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  statusCode: number,
+  payload: unknown
+): void => {
   response.statusCode = statusCode;
-  setCorsHeaders(response);
+  setCorsHeaders(request, response);
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
 };
 
-export const writeNoContent = (response: ServerResponse): void => {
+export const writeNoContent = (request: IncomingMessage, response: ServerResponse): void => {
   response.statusCode = 204;
-  setCorsHeaders(response);
+  setCorsHeaders(request, response);
   response.end();
 };

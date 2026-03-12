@@ -13,6 +13,7 @@
 - 2026-03-13 00:11 GST: Replaced admin placeholders with live source health table and actionable review queue decisions.
 - 2026-03-13 00:17 GST: Expanded API with seeded market/parcel/listing/alert/event data, filterable endpoints, login route, and admin mutation routes.
 - 2026-03-13 00:20 GST: Added local credential file for operator login and wired auth endpoint.
+- 2026-03-13 01:08 GST: Completed targeted bug/security hardening pass (auth guardrails, CORS restrictions, input validation, request-size limits, and map render race fix).
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -24,7 +25,9 @@
 - 2026-03-13 00:31 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after functional implementation changes.
 - 2026-03-13 00:36 GST: API functional checks passed for health, markets, parcels, listings, alerts, events, admin sources/reviews, and login endpoints.
 - 2026-03-13 00:39 GST: Playwright UI testing became unavailable after MCP transport termination during session; command-level verification was completed.
+- 2026-03-13 01:12 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after security fixes.
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
 - Admin review decisions persist only in process memory until API restart.
+- API auth/session state is in-memory only; move to Redis or DB-backed session store for distributed/runtime durability.

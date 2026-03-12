@@ -92,10 +92,15 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 const formatDateTime = (value: string): string => new Date(value).toLocaleString();
 
-const priceStateLabel = (state: PriceState): string => state.replace("_", " ");
+const priceStateLabel = (state: PriceState): string => state.replaceAll("_", " ");
 
-const fetchCollection = async <T,>(path: string): Promise<T[]> => {
-  const response = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
+const fetchCollection = async <T,>(path: string, signal?: AbortSignal): Promise<T[]> => {
+  const requestInit: RequestInit = { cache: "no-store" };
+  if (signal) {
+    requestInit.signal = signal;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, requestInit);
   if (!response.ok) {
     throw new Error(`Request failed for ${path}: ${response.status}`);
   }
@@ -128,6 +133,8 @@ export const LandIntelligenceApp = () => {
   );
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const loadMarkets = async () => {
       setIsLoading(true);
       setError(null);
@@ -149,7 +156,7 @@ export const LandIntelligenceApp = () => {
         params.set("minConfidence", minConfidence);
         params.set("windowDays", String(windowDays));
 
-        const data = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`);
+        const data = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`, controller.signal);
         setMarkets(data);
 
         setSelectedMarketId((previous) => {
@@ -160,13 +167,23 @@ export const LandIntelligenceApp = () => {
           return data[0]?.id ?? "";
         });
       } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
         setError(requestError instanceof Error ? requestError.message : "Failed to load markets");
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
       }
     };
 
     void loadMarkets();
+
+    return () => {
+      controller.abort();
+    };
   }, [coverageFilter, minConfidence, query, stateFilter, windowDays]);
 
   useEffect(() => {
@@ -177,6 +194,8 @@ export const LandIntelligenceApp = () => {
       setEvents([]);
       return;
     }
+
+    const controller = new AbortController();
 
     const loadDetails = async () => {
       try {
@@ -193,10 +212,10 @@ export const LandIntelligenceApp = () => {
         const eventParams = new URLSearchParams({ marketId: selectedMarketId, windowDays: String(windowDays) });
 
         const [parcelRows, listingRows, alertRows, eventRows] = await Promise.all([
-          fetchCollection<ParcelDto>(`/v1/parcels?${parcelParams.toString()}`),
-          fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`),
-          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true`),
-          fetchCollection<ActivityEventDto>(`/v1/events?${eventParams.toString()}`)
+          fetchCollection<ParcelDto>(`/v1/parcels?${parcelParams.toString()}`, controller.signal),
+          fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`, controller.signal),
+          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true`, controller.signal),
+          fetchCollection<ActivityEventDto>(`/v1/events?${eventParams.toString()}`, controller.signal)
         ]);
 
         setParcels(parcelRows);
@@ -204,23 +223,47 @@ export const LandIntelligenceApp = () => {
         setAlerts(alertRows);
         setEvents(eventRows);
       } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
         setError(requestError instanceof Error ? requestError.message : "Failed to load market details");
       }
     };
 
     void loadDetails();
+
+    return () => {
+      controller.abort();
+    };
   }, [coverageFilter, legalDisplayOnly, selectedMarketId, stateFilter, windowDays]);
 
   const toggleCoverageTier = (tier: CoverageTier) => {
-    setCoverageFilter((previous) =>
-      previous.includes(tier) ? previous.filter((value) => value !== tier) : [...previous, tier]
-    );
+    setCoverageFilter((previous) => {
+      if (previous.includes(tier)) {
+        if (previous.length === 1) {
+          return previous;
+        }
+
+        return previous.filter((value) => value !== tier);
+      }
+
+      return [...previous, tier];
+    });
   };
 
   const togglePriceState = (state: PriceState) => {
-    setStateFilter((previous) =>
-      previous.includes(state) ? previous.filter((value) => value !== state) : [...previous, state]
-    );
+    setStateFilter((previous) => {
+      if (previous.includes(state)) {
+        if (previous.length === 1) {
+          return previous;
+        }
+
+        return previous.filter((value) => value !== state);
+      }
+
+      return [...previous, state];
+    });
   };
 
   return (

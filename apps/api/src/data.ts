@@ -481,8 +481,3 @@ export const reviewQueue: ReviewItemDto[] = [
     status: "pending"
   }
 ];
-
-export const localAccount = {
-  email: "ssk222325@gmail.com",
-  password: "oCEf23g#Y3$5yd8Fhz"
-};

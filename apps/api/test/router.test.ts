@@ -22,4 +22,5 @@ test("resolveRoute extracts params from POST review decision route", () => {
   const reviewRoute = resolveRoute(createRequest("POST", "/v1/admin/reviews/r-001/approve"));
   assert.equal(reviewRoute?.params.id, "r-001");
   assert.equal(reviewRoute?.params.decision, "approve");
+  assert.equal(reviewRoute?.definition.requiresAuth, true);
 });

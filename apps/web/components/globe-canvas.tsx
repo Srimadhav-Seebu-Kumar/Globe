@@ -79,6 +79,10 @@ const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
 export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const latestFeatureCollectionRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({
+    type: "FeatureCollection",
+    features: []
+  });
   const [mapError, setMapError] = useState<string | null>(null);
 
   const marketFeatureCollection = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(
@@ -102,6 +106,10 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     }),
     [markets, selectedMarketId]
   );
+
+  useEffect(() => {
+    latestFeatureCollectionRef.current = marketFeatureCollection;
+  }, [marketFeatureCollection]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
@@ -144,10 +152,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
 
       map.addSource("markets", {
         type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: []
-        }
+        data: latestFeatureCollectionRef.current
       });
 
       map.addLayer({
@@ -250,12 +255,24 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded()) {
+    if (!map) {
+      return;
+    }
+
+    if (!map.isStyleLoaded()) {
+      map.once("load", () => {
+        const lateSource = map.getSource("markets") as GeoJSONSource | undefined;
+        lateSource?.setData(marketFeatureCollection);
+      });
       return;
     }
 
     const source = map.getSource("markets") as GeoJSONSource | undefined;
-    source?.setData(marketFeatureCollection);
+    if (!source) {
+      return;
+    }
+
+    source.setData(marketFeatureCollection);
   }, [marketFeatureCollection]);
 
   useEffect(() => {

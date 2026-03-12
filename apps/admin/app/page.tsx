@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface SourceHealthDto {
   id: string;
@@ -26,14 +26,29 @@ interface ReviewItemDto {
   status: "pending" | "approved" | "rejected";
 }
 
+interface LoginResponseDto {
+  ok: boolean;
+  token: string | null;
+  email: string | null;
+  role: "operator" | null;
+  errorCode?: string;
+}
+
 interface CollectionResponse<T> {
   data: T[];
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const SESSION_STORAGE_KEY = "globe_admin_token";
 
-const fetchCollection = async <T,>(path: string): Promise<T[]> => {
-  const response = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
+const fetchCollection = async <T,>(path: string, token: string): Promise<T[]> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  });
+
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
@@ -61,40 +76,112 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadAdminData = async (sourceStatus: "all" | SourceHealthDto["status"]) => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const sourcePath = sourceStatus === "all" ? "/v1/admin/sources" : `/v1/admin/sources?status=${sourceStatus}`;
-      const [sourceRows, reviewRows] = await Promise.all([
-        fetchCollection<SourceHealthDto>(sourcePath),
-        fetchCollection<ReviewItemDto>("/v1/admin/reviews")
-      ]);
-
-      setSources(sourceRows);
-      setReviews(reviewRows);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Failed to load admin data");
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [token, setToken] = useState<string>("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    void loadAdminData(statusFilter);
-  }, [statusFilter]);
+    const stored = globalThis.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (stored) {
+      setToken(stored);
+    }
+  }, []);
+
+  const loadAdminData = useCallback(
+    async (sourceStatus: "all" | SourceHealthDto["status"], authToken: string) => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const sourcePath = sourceStatus === "all" ? "/v1/admin/sources" : `/v1/admin/sources?status=${sourceStatus}`;
+        const [sourceRows, reviewRows] = await Promise.all([
+          fetchCollection<SourceHealthDto>(sourcePath, authToken),
+          fetchCollection<ReviewItemDto>("/v1/admin/reviews", authToken)
+        ]);
+
+        setSources(sourceRows);
+        setReviews(reviewRows);
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "Failed to load admin data");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!token) {
+      setSources([]);
+      setReviews([]);
+      setIsLoading(false);
+      return;
+    }
+
+    void loadAdminData(statusFilter, token);
+  }, [loadAdminData, statusFilter, token]);
 
   const pendingCount = useMemo(() => reviews.filter((review) => review.status === "pending").length, [reviews]);
 
   const applyDecision = async (reviewId: string, decision: "approve" | "reject") => {
-    await fetch(`${API_BASE_URL}/v1/admin/reviews/${reviewId}/${decision}`, {
+    if (!token) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/admin/reviews/${reviewId}/${decision}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Decision update failed (${response.status})`);
+      }
+
+      await loadAdminData(statusFilter, token);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Decision update failed");
+    }
+  };
+
+  const login = async () => {
+    setAuthError(null);
+
+    const response = await fetch(`${API_BASE_URL}/v1/auth/login`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({})
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ email, password })
     });
 
-    await loadAdminData(statusFilter);
+    if (!response.ok) {
+      setAuthError(`Login request failed (${response.status})`);
+      return;
+    }
+
+    const payload = (await response.json()) as LoginResponseDto;
+    if (!payload.ok || !payload.token) {
+      const message = payload.errorCode === "auth_unconfigured" ? "API auth is not configured. Set APP_OPERATOR_EMAIL and APP_OPERATOR_PASSWORD." : "Invalid credentials.";
+      setAuthError(message);
+      return;
+    }
+
+    setToken(payload.token);
+    globalThis.localStorage.setItem(SESSION_STORAGE_KEY, payload.token);
+    setPassword("");
+    await loadAdminData(statusFilter, payload.token);
+  };
+
+  const logout = () => {
+    setToken("");
+    setSources([]);
+    setReviews([]);
+    setError(null);
+    globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
   return (
@@ -111,29 +198,67 @@ export default function AdminPage() {
       <section className="content">
         <aside className="sidebar">
           <h3 style={{ marginTop: 0 }}>Operations</h3>
-          <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#9ca3af" }} htmlFor="status-filter">
-            Source status filter
-          </label>
-          <select
-            id="status-filter"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as "all" | SourceHealthDto["status"])}
-            style={{ width: "100%", marginTop: 6, padding: "8px", borderRadius: 6, background: "#0b1222", color: "#e5e7eb", border: "1px solid #1f2937" }}
-          >
-            <option value="all">all</option>
-            <option value="healthy">healthy</option>
-            <option value="degraded">degraded</option>
-            <option value="offline">offline</option>
-          </select>
+          {!token ? (
+            <>
+              <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#9ca3af" }} htmlFor="admin-email">
+                Operator email
+              </label>
+              <input
+                id="admin-email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                style={{ width: "100%", marginTop: 6, padding: "8px", borderRadius: 6, background: "#0b1222", color: "#e5e7eb", border: "1px solid #1f2937" }}
+              />
 
-          <p style={{ color: "#9ca3af", fontSize: 12, marginTop: 14 }}>Manual review decisions sync immediately with API memory state.</p>
+              <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#9ca3af" }} htmlFor="admin-password">
+                Password
+              </label>
+              <input
+                id="admin-password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                style={{ width: "100%", marginTop: 6, padding: "8px", borderRadius: 6, background: "#0b1222", color: "#e5e7eb", border: "1px solid #1f2937" }}
+              />
+
+              <button className="action-btn" style={{ marginTop: 10 }} onClick={() => void login()}>
+                Sign in
+              </button>
+              {authError ? <p style={{ color: "#fb7185", fontSize: 12 }}>{authError}</p> : null}
+            </>
+          ) : (
+            <>
+              <label style={{ display: "block", marginTop: 8, fontSize: 12, color: "#9ca3af" }} htmlFor="status-filter">
+                Source status filter
+              </label>
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as "all" | SourceHealthDto["status"])}
+                style={{ width: "100%", marginTop: 6, padding: "8px", borderRadius: 6, background: "#0b1222", color: "#e5e7eb", border: "1px solid #1f2937" }}
+              >
+                <option value="all">all</option>
+                <option value="healthy">healthy</option>
+                <option value="degraded">degraded</option>
+                <option value="offline">offline</option>
+              </select>
+
+              <button className="action-btn" style={{ marginTop: 10 }} onClick={logout}>
+                Sign out
+              </button>
+              <p style={{ color: "#9ca3af", fontSize: 12, marginTop: 14 }}>Manual review decisions are restricted to authenticated operator sessions.</p>
+            </>
+          )}
+
           {error ? <p style={{ color: "#fb7185", fontSize: 12 }}>{error}</p> : null}
         </aside>
 
         <div className="main">
           <article className="card" style={{ gridColumn: "1 / -1" }}>
             <h3 style={{ marginTop: 0 }}>Source health</h3>
-            {isLoading ? (
+            {!token ? (
+              <p style={{ color: "#9ca3af", fontSize: 13 }}>Sign in to view source telemetry.</p>
+            ) : isLoading ? (
               <p style={{ color: "#9ca3af", fontSize: 13 }}>Loading source telemetry...</p>
             ) : (
               <table className="admin-table">
@@ -198,14 +323,14 @@ export default function AdminPage() {
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
                           className="action-btn"
-                          disabled={review.status !== "pending"}
+                          disabled={review.status !== "pending" || !token}
                           onClick={() => void applyDecision(review.id, "approve")}
                         >
                           Approve
                         </button>
                         <button
                           className="action-btn danger"
-                          disabled={review.status !== "pending"}
+                          disabled={review.status !== "pending" || !token}
                           onClick={() => void applyDecision(review.id, "reject")}
                         >
                           Reject

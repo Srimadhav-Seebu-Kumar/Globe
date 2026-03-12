@@ -116,6 +116,7 @@ export interface LoginResponseDto {
   token: string | null;
   email: string | null;
   role: "operator" | null;
+  errorCode?: "invalid_credentials" | "auth_unconfigured" | "rate_limited";
 }
 
 export interface CollectionResponse<T> {
