@@ -62,6 +62,52 @@ body {
   padding: 14px;
 }
 
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-table th {
+  text-align: left;
+  font-weight: 600;
+  color: #cbd5e1;
+  border-bottom: 1px solid #1f2937;
+  padding: 8px 6px;
+}
+
+.admin-table td {
+  border-bottom: 1px solid #111827;
+  padding: 8px 6px;
+  color: #d1d5db;
+  vertical-align: top;
+}
+
+.admin-table small {
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.action-btn {
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  background: #0b1222;
+  color: #d1d5db;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.action-btn.danger {
+  border-color: #4c1d1d;
+  color: #fca5a5;
+}
+
 .kpis {
   display: flex;
   gap: 10px;

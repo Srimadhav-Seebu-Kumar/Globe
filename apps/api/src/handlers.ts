@@ -1,34 +1,287 @@
 import type {
-  AlertDto,
+  ActivityEventDto,
   CollectionResponse,
-  HealthResponse,
-  ListingDto,
+  LoginResponseDto,
   MarketDto,
-  ParcelDto
+  ReviewItemDto
 } from "./contracts.js";
+import { activityEvents, alerts, listings, localAccount, markets, parcels, reviewQueue, sourceHealthRows } from "./data.js";
 
-export const health = (): HealthResponse => ({
-  status: "ok",
-  service: "api",
+const parseMultiValue = (url: URL, key: string): string[] => {
+  const repeated = url.searchParams.getAll(key).filter(Boolean);
+  if (repeated.length > 0) {
+    return repeated;
+  }
+
+  const combined = url.searchParams.get(key);
+  return combined ? combined.split(",").map((value) => value.trim()).filter(Boolean) : [];
+};
+
+const rankConfidence = (label: MarketDto["confidence"]): number => {
+  const rankMap: Record<MarketDto["confidence"], number> = {
+    low: 1,
+    medium: 2,
+    high: 3,
+    verified: 4
+  };
+
+  return rankMap[label];
+};
+
+const parseWindowDays = (url: URL): number => {
+  const requested = Number(url.searchParams.get("windowDays") ?? 90);
+  if (!Number.isFinite(requested)) {
+    return 90;
+  }
+
+  return Math.max(1, Math.min(3650, Math.round(requested)));
+};
+
+const withinWindow = (isoTimestamp: string, windowDays: number): boolean => {
+  const eventTime = new Date(isoTimestamp).getTime();
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  return eventTime >= cutoff;
+};
+
+const okResponse = <T>(items: T[], filtersApplied?: Record<string, string | string[]>): CollectionResponse<T> => ({
+  data: items,
+  meta: {
+    total: items.length,
+    ...(filtersApplied ? { filtersApplied } : {})
+  }
+});
+
+export const health = () => ({
+  status: "ok" as const,
+  service: "api" as const,
   timestamp: new Date().toISOString()
 });
 
-export const listMarkets = (): CollectionResponse<MarketDto> => ({
-  data: [],
-  meta: { total: 0 }
-});
+export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
+  const query = (url.searchParams.get("query") ?? "").trim().toLowerCase();
+  const coverageTier = parseMultiValue(url, "coverageTier");
+  const requiredStates = parseMultiValue(url, "state");
+  const minConfidence = (url.searchParams.get("minConfidence") ?? "low") as MarketDto["confidence"];
+  const windowDays = parseWindowDays(url);
 
-export const listParcels = (): CollectionResponse<ParcelDto> => ({
-  data: [],
-  meta: { total: 0 }
-});
+  const marketStateMap = new Map<string, Set<string>>();
+  for (const listing of listings) {
+    if (!withinWindow(listing.observedAt, windowDays)) {
+      continue;
+    }
 
-export const listListings = (): CollectionResponse<ListingDto> => ({
-  data: [],
-  meta: { total: 0 }
-});
+    if (!marketStateMap.has(listing.marketId)) {
+      marketStateMap.set(listing.marketId, new Set<string>());
+    }
 
-export const listAlerts = (): CollectionResponse<AlertDto> => ({
-  data: [],
-  meta: { total: 0 }
-});
+    marketStateMap.get(listing.marketId)?.add(listing.state);
+  }
+
+  const filtered = markets
+    .filter((market) => {
+      if (query && !`${market.name} ${market.slug} ${market.countryCode} ${market.region}`.toLowerCase().includes(query)) {
+        return false;
+      }
+
+      if (coverageTier.length > 0 && !coverageTier.includes(market.coverageTier)) {
+        return false;
+      }
+
+      if (rankConfidence(market.confidence) < rankConfidence(minConfidence)) {
+        return false;
+      }
+
+      if (requiredStates.length > 0) {
+        const availableStates = marketStateMap.get(market.id) ?? new Set<string>();
+        for (const state of requiredStates) {
+          if (!availableStates.has(state)) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    })
+    .sort((left, right) => right.activityScore - left.activityScore);
+
+  return okResponse(filtered, {
+    query,
+    coverageTier,
+    state: requiredStates,
+    minConfidence,
+    windowDays: windowDays.toString()
+  });
+};
+
+export const listParcels = (url: URL) => {
+  const marketId = url.searchParams.get("marketId");
+  const coverageTier = parseMultiValue(url, "coverageTier");
+  const legalDisplayOnly = url.searchParams.get("legalDisplayOnly") === "true";
+
+  const filtered = parcels.filter((parcel) => {
+    if (marketId && parcel.marketId !== marketId) {
+      return false;
+    }
+
+    if (coverageTier.length > 0 && !coverageTier.includes(parcel.coverageTier)) {
+      return false;
+    }
+
+    if (legalDisplayOnly && !parcel.legalDisplayAllowed) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return okResponse(filtered, {
+    ...(marketId ? { marketId } : {}),
+    coverageTier,
+    legalDisplayOnly: legalDisplayOnly.toString()
+  });
+};
+
+export const listListings = (url: URL) => {
+  const marketId = url.searchParams.get("marketId");
+  const parcelId = url.searchParams.get("parcelId");
+  const states = parseMultiValue(url, "state");
+  const windowDays = parseWindowDays(url);
+
+  const filtered = listings
+    .filter((listing) => {
+      if (marketId && listing.marketId !== marketId) {
+        return false;
+      }
+
+      if (parcelId && listing.parcelId !== parcelId) {
+        return false;
+      }
+
+      if (states.length > 0 && !states.includes(listing.state)) {
+        return false;
+      }
+
+      return withinWindow(listing.observedAt, windowDays);
+    })
+    .sort((left, right) => +new Date(right.observedAt) - +new Date(left.observedAt));
+
+  return okResponse(filtered, {
+    ...(marketId ? { marketId } : {}),
+    ...(parcelId ? { parcelId } : {}),
+    state: states,
+    windowDays: windowDays.toString()
+  });
+};
+
+export const listAlerts = (url: URL) => {
+  const marketId = url.searchParams.get("marketId");
+  const activeOnly = url.searchParams.get("activeOnly") !== "false";
+
+  const filtered = alerts.filter((alert) => {
+    if (marketId && alert.marketId !== marketId) {
+      return false;
+    }
+
+    if (activeOnly && !alert.isActive) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return okResponse(filtered, {
+    ...(marketId ? { marketId } : {}),
+    activeOnly: activeOnly.toString()
+  });
+};
+
+export const listSourceHealth = (url: URL) => {
+  const statusFilter = parseMultiValue(url, "status");
+
+  const filtered = sourceHealthRows.filter((row) => {
+    if (statusFilter.length > 0 && !statusFilter.includes(row.status)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return okResponse(filtered, {
+    status: statusFilter
+  });
+};
+
+export const listReviewQueue = (url: URL): CollectionResponse<ReviewItemDto> => {
+  const statusFilter = parseMultiValue(url, "status");
+  const severityFilter = parseMultiValue(url, "severity");
+
+  const filtered = reviewQueue.filter((item) => {
+    if (statusFilter.length > 0 && !statusFilter.includes(item.status)) {
+      return false;
+    }
+
+    if (severityFilter.length > 0 && !severityFilter.includes(item.severity)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return okResponse(filtered, {
+    status: statusFilter,
+    severity: severityFilter
+  });
+};
+
+export const setReviewDecision = (
+  reviewId: string,
+  decision: "approved" | "rejected"
+): { ok: boolean; review: ReviewItemDto | null } => {
+  const review = reviewQueue.find((candidate) => candidate.id === reviewId);
+
+  if (!review) {
+    return { ok: false, review: null };
+  }
+
+  review.status = decision;
+  return { ok: true, review };
+};
+
+export const listActivityEvents = (url: URL): CollectionResponse<ActivityEventDto> => {
+  const marketId = url.searchParams.get("marketId");
+  const windowDays = parseWindowDays(url);
+
+  const filtered = activityEvents
+    .filter((event) => {
+      if (marketId && event.marketId !== marketId) {
+        return false;
+      }
+
+      return withinWindow(event.occurredAt, windowDays);
+    })
+    .sort((left, right) => +new Date(right.occurredAt) - +new Date(left.occurredAt));
+
+  return okResponse(filtered, {
+    ...(marketId ? { marketId } : {}),
+    windowDays: windowDays.toString()
+  });
+};
+
+export const login = (body: unknown): LoginResponseDto => {
+  if (!body || typeof body !== "object") {
+    return { ok: false, token: null, email: null, role: null };
+  }
+
+  const payload = body as { email?: string; password?: string };
+
+  if (payload.email !== localAccount.email || payload.password !== localAccount.password) {
+    return { ok: false, token: null, email: null, role: null };
+  }
+
+  return {
+    ok: true,
+    token: "local-dev-session-token",
+    email: localAccount.email,
+    role: "operator"
+  };
+};

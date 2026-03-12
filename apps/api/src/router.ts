@@ -1,58 +1,154 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { health, listAlerts, listListings, listMarkets, listParcels } from "./handlers.js";
+import {
+  health,
+  listActivityEvents,
+  listAlerts,
+  listListings,
+  listMarkets,
+  listParcels,
+  listReviewQueue,
+  listSourceHealth,
+  login,
+  setReviewDecision
+} from "./handlers.js";
 
-type Method = "GET";
+type Method = "GET" | "POST" | "OPTIONS";
+
+export interface RouteContext {
+  request: IncomingMessage;
+  url: URL;
+  params: Record<string, string>;
+  body: unknown;
+}
+
+export type RouteHandler = (context: RouteContext) => unknown;
 
 interface RouteDefinition {
   method: Method;
-  path: string;
+  pattern: RegExp;
   description: string;
-  handler: () => unknown;
+  handler: RouteHandler;
 }
 
 export const routes: RouteDefinition[] = [
   {
     method: "GET",
-    path: "/health",
+    pattern: /^\/health$/,
     description: "Liveness and readiness signal",
-    handler: health
+    handler: () => health()
   },
   {
     method: "GET",
-    path: "/v1/markets",
-    description: "Market summaries with coverage and confidence",
-    handler: listMarkets
+    pattern: /^\/v1\/markets$/,
+    description: "Market summaries with coverage and confidence filters",
+    handler: ({ url }) => listMarkets(url)
   },
   {
     method: "GET",
-    path: "/v1/parcels",
-    description: "Parcel list skeleton for eligible markets",
-    handler: listParcels
+    pattern: /^\/v1\/parcels$/,
+    description: "Parcel retrieval for eligible markets",
+    handler: ({ url }) => listParcels(url)
   },
   {
     method: "GET",
-    path: "/v1/listings",
-    description: "Listing skeleton with separated pricing states",
-    handler: listListings
+    pattern: /^\/v1\/listings$/,
+    description: "Listings and pricing-state observations",
+    handler: ({ url }) => listListings(url)
   },
   {
     method: "GET",
-    path: "/v1/alerts",
-    description: "User alert skeleton",
-    handler: listAlerts
+    pattern: /^\/v1\/alerts$/,
+    description: "Alert subscriptions and trigger events",
+    handler: ({ url }) => listAlerts(url)
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/events$/,
+    description: "Activity ticker events",
+    handler: ({ url }) => listActivityEvents(url)
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/admin\/sources$/,
+    description: "Source health telemetry",
+    handler: ({ url }) => listSourceHealth(url)
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/admin\/reviews$/,
+    description: "Review queue",
+    handler: ({ url }) => listReviewQueue(url)
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/admin\/reviews\/(?<id>[^/]+)\/(?<decision>approve|reject)$/,
+    description: "Apply review decision",
+    handler: ({ params }) => {
+      if (!params.id || !params.decision) {
+        return { ok: false, review: null };
+      }
+
+      const decision = params.decision === "approve" ? "approved" : "rejected";
+      return setReviewDecision(params.id, decision);
+    }
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/auth\/login$/,
+    description: "Local login endpoint",
+    handler: ({ body }) => login(body)
   }
 ];
 
-export const resolveRoute = (request: IncomingMessage): RouteDefinition | undefined => {
-  const method = request.method as Method | undefined;
-  const url = new URL(request.url ?? "/", "http://localhost");
+export interface ResolvedRoute {
+  definition: RouteDefinition;
+  params: Record<string, string>;
+}
 
-  return routes.find((candidate) => candidate.method === method && candidate.path === url.pathname);
+export const resolveRoute = (request: IncomingMessage): ResolvedRoute | undefined => {
+  const method = request.method as Method | undefined;
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+
+  for (const route of routes) {
+    if (route.method !== method) {
+      continue;
+    }
+
+    const match = pathname.match(route.pattern);
+    if (!match) {
+      continue;
+    }
+
+    const params: Record<string, string> = {};
+    for (const [key, value] of Object.entries(match.groups ?? {})) {
+      params[key] = value;
+    }
+
+    return {
+      definition: route,
+      params
+    };
+  }
+
+  return undefined;
+};
+
+const setCorsHeaders = (response: ServerResponse): void => {
+  response.setHeader("access-control-allow-origin", "*");
+  response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+  response.setHeader("access-control-allow-headers", "content-type,authorization");
 };
 
 export const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.statusCode = statusCode;
+  setCorsHeaders(response);
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
+};
+
+export const writeNoContent = (response: ServerResponse): void => {
+  response.statusCode = 204;
+  setCorsHeaders(response);
+  response.end();
 };

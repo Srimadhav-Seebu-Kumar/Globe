@@ -4,16 +4,22 @@ import type { IncomingMessage } from "node:http";
 
 import { resolveRoute } from "../src/router.js";
 
-const createRequest = (url: string): IncomingMessage =>
+const createRequest = (method: "GET" | "POST", url: string): IncomingMessage =>
   ({
-    method: "GET",
+    method,
     url
   } as IncomingMessage);
 
-test("resolveRoute matches defined skeleton routes", () => {
-  const marketRoute = resolveRoute(createRequest("/v1/markets"));
-  assert.equal(marketRoute?.path, "/v1/markets");
+test("resolveRoute matches GET routes", () => {
+  const marketRoute = resolveRoute(createRequest("GET", "/v1/markets"));
+  assert.equal(marketRoute?.definition.description.includes("Market summaries"), true);
 
-  const missingRoute = resolveRoute(createRequest("/v1/missing"));
+  const missingRoute = resolveRoute(createRequest("GET", "/v1/missing"));
   assert.equal(missingRoute, undefined);
+});
+
+test("resolveRoute extracts params from POST review decision route", () => {
+  const reviewRoute = resolveRoute(createRequest("POST", "/v1/admin/reviews/r-001/approve"));
+  assert.equal(reviewRoute?.params.id, "r-001");
+  assert.equal(reviewRoute?.params.decision, "approve");
 });

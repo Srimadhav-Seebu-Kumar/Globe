@@ -1,11 +1,29 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import maplibregl, { type StyleSpecification } from "maplibre-gl";
+import { useEffect, useMemo, useRef, useState } from "react";
+import maplibregl, { type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
+import type { CoverageTier } from "@globe/types";
+
+interface MarketMapItem {
+  id: string;
+  name: string;
+  center: {
+    lng: number;
+    lat: number;
+  };
+  coverageTier: CoverageTier;
+  activityScore: number;
+}
+
+interface GlobeCanvasProps {
+  markets: MarketMapItem[];
+  selectedMarketId: string;
+  onSelectMarket: (marketId: string) => void;
+}
 
 const style: StyleSpecification = {
   version: 8,
-  name: "globe-scaffold-style",
+  name: "land-intelligence-globe",
   projection: { type: "globe" },
   sources: {},
   layers: [
@@ -13,56 +31,269 @@ const style: StyleSpecification = {
       id: "background",
       type: "background",
       paint: {
-        "background-color": "#020817"
+        "background-color": "#020617"
       }
     }
   ]
 };
 
-export const GlobeCanvas = () => {
+const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
+  const features: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+
+  for (let lng = -180; lng <= 180; lng += 30) {
+    const coordinates: [number, number][] = [];
+    for (let lat = -80; lat <= 80; lat += 2) {
+      coordinates.push([lng, lat]);
+    }
+    features.push({
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates
+      },
+      properties: {}
+    });
+  }
+
+  for (let lat = -60; lat <= 60; lat += 20) {
+    const coordinates: [number, number][] = [];
+    for (let lng = -180; lng <= 180; lng += 2) {
+      coordinates.push([lng, lat]);
+    }
+    features.push({
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates
+      },
+      properties: {}
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
+};
+
+export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+
+  const marketFeatureCollection = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(
+    () => ({
+      type: "FeatureCollection",
+      features: markets.map((market) => ({
+        type: "Feature",
+        id: market.id,
+        geometry: {
+          type: "Point",
+          coordinates: [market.center.lng, market.center.lat]
+        },
+        properties: {
+          id: market.id,
+          name: market.name,
+          coverageTier: market.coverageTier,
+          activityScore: market.activityScore,
+          selected: market.id === selectedMarketId
+        }
+      }))
+    }),
+    [markets, selectedMarketId]
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
       return;
     }
 
-    mapRef.current = new maplibregl.Map({
-      container: containerRef.current,
-      style,
-      center: [13, 28],
-      zoom: 1.4,
-      minZoom: 1,
-      maxZoom: 14
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style,
+        center: [10, 25],
+        zoom: 1.4,
+        minZoom: 1,
+        maxZoom: 10
+      });
+    } catch (error) {
+      setMapError(error instanceof Error ? error.message : "Map initialization failed");
+      return;
+    }
+
+    mapRef.current = map;
+
+    map.on("load", () => {
+      map.addSource("graticule", {
+        type: "geojson",
+        data: createGraticule()
+      });
+
+      map.addLayer({
+        id: "graticule-lines",
+        type: "line",
+        source: "graticule",
+        paint: {
+          "line-color": "#1e293b",
+          "line-width": 0.7,
+          "line-opacity": 0.8
+        }
+      });
+
+      map.addSource("markets", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: []
+        }
+      });
+
+      map.addLayer({
+        id: "market-heat",
+        type: "heatmap",
+        source: "markets",
+        maxzoom: 4,
+        paint: {
+          "heatmap-weight": ["interpolate", ["linear"], ["get", "activityScore"], 50, 0.1, 95, 1],
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 1, 20, 4, 55],
+          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 1, 0.9, 4, 1.6],
+          "heatmap-color": [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(59,130,246,0)",
+            0.2,
+            "#60a5fa",
+            0.45,
+            "#22d3ee",
+            0.65,
+            "#4ade80",
+            0.85,
+            "#f59e0b",
+            1,
+            "#ef4444"
+          ],
+          "heatmap-opacity": 0.72
+        }
+      });
+
+      map.addLayer({
+        id: "market-circles",
+        type: "circle",
+        source: "markets",
+        minzoom: 2,
+        paint: {
+          "circle-color": [
+            "match",
+            ["get", "coverageTier"],
+            "tier_c_parcel_depth",
+            "#22c55e",
+            "tier_b_market_depth",
+            "#f59e0b",
+            "#3b82f6"
+          ],
+          "circle-radius": ["interpolate", ["linear"], ["get", "activityScore"], 50, 6, 95, 18],
+          "circle-opacity": 0.85,
+          "circle-stroke-color": ["case", ["get", "selected"], "#f8fafc", "#0f172a"],
+          "circle-stroke-width": ["case", ["get", "selected"], 3, 1.2]
+        }
+      });
+
+      map.addLayer({
+        id: "market-labels",
+        type: "symbol",
+        source: "markets",
+        minzoom: 3,
+        layout: {
+          "text-field": ["get", "name"],
+          "text-size": 12,
+          "text-offset": [0, 1.3]
+        },
+        paint: {
+          "text-color": "#cbd5e1",
+          "text-halo-color": "#020617",
+          "text-halo-width": 1
+        }
+      });
+
+      map.on("click", "market-circles", (event) => {
+        const feature = event.features?.[0];
+        if (!feature) {
+          return;
+        }
+
+        const marketId = String(feature.properties?.id ?? "");
+        if (marketId) {
+          onSelectMarket(marketId);
+        }
+      });
+
+      map.on("mouseenter", "market-circles", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", "market-circles", () => {
+        map.getCanvas().style.cursor = "";
+      });
     });
 
-    mapRef.current.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
 
     return () => {
-      mapRef.current?.remove();
+      map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [onSelectMarket]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded()) {
+      return;
+    }
+
+    const source = map.getSource("markets") as GeoJSONSource | undefined;
+    source?.setData(marketFeatureCollection);
+  }, [marketFeatureCollection]);
+
+  useEffect(() => {
+    if (!selectedMarketId) {
+      return;
+    }
+
+    const selected = markets.find((item) => item.id === selectedMarketId);
+    if (!selected || !mapRef.current) {
+      return;
+    }
+
+    mapRef.current.flyTo({
+      center: [selected.center.lng, selected.center.lat],
+      zoom: Math.max(mapRef.current.getZoom(), 3),
+      speed: 0.6
+    });
+  }, [markets, selectedMarketId]);
 
   return (
-    <div style={{ position: "absolute", inset: 0 }}>
+    <div style={{ height: "100%", width: "100%", position: "relative" }}>
       <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
-      <div
-        style={{
-          position: "absolute",
-          left: 16,
-          bottom: 16,
-          border: "1px solid #334155",
-          borderRadius: 8,
-          padding: "6px 10px",
-          background: "rgba(2, 6, 23, 0.9)",
-          color: "#94a3b8",
-          fontSize: 12
-        }}
-      >
-        MapLibre globe scaffold
-      </div>
+      {mapError ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: "auto 12px 12px 12px",
+            border: "1px solid #7f1d1d",
+            borderRadius: 8,
+            padding: "8px 10px",
+            background: "rgba(30, 8, 8, 0.88)",
+            color: "#fca5a5",
+            fontSize: 12
+          }}
+        >
+          Map rendering degraded: {mapError}
+        </div>
+      ) : null}
     </div>
   );
 };
