@@ -24,12 +24,14 @@ export interface RouteContext {
 }
 
 export type RouteHandler = (context: RouteContext) => unknown;
+export type StatusResolver = (payload: unknown) => number;
 
 interface RouteDefinition {
   method: Method;
   pattern: RegExp;
   description: string;
   handler: RouteHandler;
+  statusResolver?: StatusResolver;
   requiresAuth?: boolean;
 }
 
@@ -96,13 +98,41 @@ export const routes: RouteDefinition[] = [
       const decision = params.decision === "approve" ? "approved" : "rejected";
       return setReviewDecision(params.id, decision);
     },
+    statusResolver: (payload) => {
+      if (typeof payload !== "object" || !payload || !("ok" in payload)) {
+        return 200;
+      }
+
+      const result = payload as { ok: boolean };
+      return result.ok ? 200 : 404;
+    },
     requiresAuth: true
   },
   {
     method: "POST",
     pattern: /^\/v1\/auth\/login$/,
     description: "Local login endpoint",
-    handler: ({ body, request }) => login(body, getClientKey(request))
+    handler: ({ body, request }) => login(body, getClientKey(request)),
+    statusResolver: (payload) => {
+      if (typeof payload !== "object" || !payload) {
+        return 500;
+      }
+
+      const result = payload as { ok?: boolean; errorCode?: string };
+      if (result.ok) {
+        return 200;
+      }
+
+      if (result.errorCode === "rate_limited") {
+        return 429;
+      }
+
+      if (result.errorCode === "auth_unconfigured") {
+        return 503;
+      }
+
+      return 401;
+    }
   }
 ];
 
@@ -155,6 +185,14 @@ const setCorsHeaders = (request: IncomingMessage, response: ServerResponse): voi
   response.setHeader("access-control-allow-headers", "content-type,authorization");
 };
 
+const setSecurityHeaders = (response: ServerResponse): void => {
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("x-frame-options", "DENY");
+  response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
+  response.setHeader("permissions-policy", "geolocation=(), microphone=(), camera=()");
+  response.setHeader("cache-control", "no-store");
+};
+
 export const writeJson = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -163,6 +201,7 @@ export const writeJson = (
 ): void => {
   response.statusCode = statusCode;
   setCorsHeaders(request, response);
+  setSecurityHeaders(response);
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
 };
@@ -170,5 +209,6 @@ export const writeJson = (
 export const writeNoContent = (request: IncomingMessage, response: ServerResponse): void => {
   response.statusCode = 204;
   setCorsHeaders(request, response);
+  setSecurityHeaders(response);
   response.end();
 };

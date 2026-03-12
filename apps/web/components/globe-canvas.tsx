@@ -76,6 +76,60 @@ const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
   };
 };
 
+const createLandMasses = (): GeoJSON.FeatureCollection<GeoJSON.Polygon> => ({
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      properties: { id: "north-america" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-168, 12], [-168, 72], [-130, 78], [-95, 83], [-52, 72], [-52, 12], [-168, 12]]]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { id: "south-america" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-82, -56], [-82, 13], [-60, 13], [-34, -4], [-34, -56], [-82, -56]]]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { id: "eurasia" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-10, 35], [-10, 72], [40, 77], [100, 80], [180, 70], [180, 35], [-10, 35]]]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { id: "africa" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-18, -35], [-18, 37], [52, 37], [52, -35], [-18, -35]]]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { id: "australia" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[110, -45], [110, -10], [156, -10], [156, -45], [110, -45]]]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { id: "antarctica" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-180, -90], [-180, -60], [180, -60], [180, -90], [-180, -90]]]
+      }
+    }
+  ]
+});
+
 export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -134,6 +188,32 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     mapRef.current = map;
 
     map.on("load", () => {
+      map.addSource("landmass", {
+        type: "geojson",
+        data: createLandMasses()
+      });
+
+      map.addLayer({
+        id: "landmass-fill",
+        type: "fill",
+        source: "landmass",
+        paint: {
+          "fill-color": "#0f172a",
+          "fill-opacity": 0.9
+        }
+      });
+
+      map.addLayer({
+        id: "landmass-outline",
+        type: "line",
+        source: "landmass",
+        paint: {
+          "line-color": "#334155",
+          "line-width": 1,
+          "line-opacity": 0.75
+        }
+      });
+
       map.addSource("graticule", {
         type: "geojson",
         data: createGraticule()

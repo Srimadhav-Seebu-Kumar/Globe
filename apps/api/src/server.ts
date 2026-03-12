@@ -118,11 +118,15 @@ const server = createServer(async (request, response) => {
       body: bodyResult.value
     });
 
-    writeJson(request, response, 200, payload);
+    const statusCode = resolved.definition.statusResolver
+      ? resolved.definition.statusResolver(payload)
+      : 200;
+    writeJson(request, response, statusCode, payload);
   } catch (error) {
+    const isProd = process.env.NODE_ENV === "production";
     writeJson(request, response, 500, {
       error: "Internal server error",
-      message: error instanceof Error ? error.message : "Unknown error"
+      message: isProd ? "Unexpected server error" : error instanceof Error ? error.message : "Unknown error"
     });
   }
 });

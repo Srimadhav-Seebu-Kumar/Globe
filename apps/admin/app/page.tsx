@@ -82,9 +82,13 @@ export default function AdminPage() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = globalThis.localStorage.getItem(SESSION_STORAGE_KEY);
-    if (stored) {
-      setToken(stored);
+    const sessionToken = globalThis.sessionStorage.getItem(SESSION_STORAGE_KEY);
+    const legacyToken = globalThis.localStorage.getItem(SESSION_STORAGE_KEY);
+    const restoredToken = sessionToken ?? legacyToken;
+    if (restoredToken) {
+      setToken(restoredToken);
+      globalThis.sessionStorage.setItem(SESSION_STORAGE_KEY, restoredToken);
+      globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
     }
   }, []);
 
@@ -171,7 +175,8 @@ export default function AdminPage() {
     }
 
     setToken(payload.token);
-    globalThis.localStorage.setItem(SESSION_STORAGE_KEY, payload.token);
+    globalThis.sessionStorage.setItem(SESSION_STORAGE_KEY, payload.token);
+    globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
     setPassword("");
     await loadAdminData(statusFilter, payload.token);
   };
@@ -181,6 +186,7 @@ export default function AdminPage() {
     setSources([]);
     setReviews([]);
     setError(null);
+    globalThis.sessionStorage.removeItem(SESSION_STORAGE_KEY);
     globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 

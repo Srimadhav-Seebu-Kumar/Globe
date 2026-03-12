@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
 export interface AuthSession {
@@ -39,14 +39,9 @@ const getSessionTtlMs = (): number => {
 };
 
 const safeEqual = (left: string, right: string): boolean => {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(leftBuffer, rightBuffer);
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
 };
 
 const clearExpiredSessions = (): void => {
@@ -54,6 +49,14 @@ const clearExpiredSessions = (): void => {
   for (const [token, session] of sessions) {
     if (session.expiresAt <= now) {
       sessions.delete(token);
+    }
+  }
+};
+
+const clearExpiredLoginAttempts = (now: number): void => {
+  for (const [key, attempt] of loginAttempts) {
+    if (now - attempt.windowStartedAt > LOGIN_WINDOW_MS) {
+      loginAttempts.delete(key);
     }
   }
 };
@@ -80,6 +83,7 @@ export const loginWithCredentials = (
   }
 
   const now = Date.now();
+  clearExpiredLoginAttempts(now);
   const attempt = loginAttempts.get(clientKey);
 
   if (attempt) {

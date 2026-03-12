@@ -11,6 +11,12 @@
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@globe/config": ["packages/config/src/index.ts"],
+      "@globe/geo": ["packages/geo/src/index.ts"],
+      "@globe/types": ["packages/types/src/index.ts"],
+      "@globe/ui": ["packages/ui/src/index.tsx"]
+    }
   }
 }
