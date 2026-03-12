@@ -13,3 +13,10 @@ Production-oriented scaffold for a worldwide land-intelligence platform with mar
    - API: `npm run dev:api`
 
 Python services are scaffolded under `services/` with their own `pyproject.toml` files.
+
+## AWS deployment automation
+
+Deployment assets are in:
+- `infra/docker/` (container images for `api`, `web`, `admin`)
+- `.github/workflows/` (build + push + App Runner deploy workflows)
+- `infra/aws/README.md` and `infra/aws/scripts/bootstrap.ps1` (bootstrap instructions)

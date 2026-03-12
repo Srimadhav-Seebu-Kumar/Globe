@@ -14,6 +14,7 @@
 - 2026-03-13 00:17 GST: Expanded API with seeded market/parcel/listing/alert/event data, filterable endpoints, login route, and admin mutation routes.
 - 2026-03-13 00:20 GST: Added local credential file for operator login and wired auth endpoint.
 - 2026-03-13 01:08 GST: Completed targeted bug/security hardening pass (auth guardrails, CORS restrictions, input validation, request-size limits, and map render race fix).
+- 2026-03-13 01:42 GST: Added AWS hosting automation scaffold (Dockerfiles for web/admin/api, GitHub deploy workflows, AWS bootstrap script, and deployment runbook).
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -26,8 +27,12 @@
 - 2026-03-13 00:36 GST: API functional checks passed for health, markets, parcels, listings, alerts, events, admin sources/reviews, and login endpoints.
 - 2026-03-13 00:39 GST: Playwright UI testing became unavailable after MCP transport termination during session; command-level verification was completed.
 - 2026-03-13 01:12 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after security fixes.
+- 2026-03-13 01:49 GST: Re-ran `npm run lint`, `npm run test`, and `npm run build`; all passed after hosting automation files were added.
+- 2026-03-13 01:50 GST: Installed AWS CLI via `pip` (`python -m awscli`) and verified command availability.
+- 2026-03-13 01:50 GST: Blocking constraint: AWS programmatic credentials are not available in this environment (`Unable to locate credentials`), so actual cloud resource provisioning/deploy execution could not be completed from this session.
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
 - Admin review decisions persist only in process memory until API restart.
 - API auth/session state is in-memory only; move to Redis or DB-backed session store for distributed/runtime durability.
+- AWS deployment workflows are committed, but first deployment requires valid AWS API credentials (access key/secret or SSO session) and GitHub repository secrets.
