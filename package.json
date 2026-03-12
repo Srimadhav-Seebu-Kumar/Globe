@@ -1,0 +1,28 @@
+{
+  "name": "globe-land-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Worldwide land-intelligence monorepo scaffold",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:web": "npm run dev -w @globe/web",
+    "dev:admin": "npm run dev -w @globe/admin",
+    "dev:api": "npm run dev -w @globe/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.2"
+  }
+}

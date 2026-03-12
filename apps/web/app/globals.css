@@ -1,0 +1,132 @@
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+:root {
+  --bg: #020817;
+  --surface: rgba(15, 23, 42, 0.92);
+  --panel: rgba(2, 6, 23, 0.88);
+  --line: #1e293b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #0ea5e9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+main {
+  margin: 0;
+  min-height: 100%;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  color: var(--text);
+  background: radial-gradient(circle at top, #0f172a 0%, var(--bg) 70%);
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
+  grid-template-rows: 64px minmax(0, 1fr) 120px 44px;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "left map right"
+    "left legend right"
+    "ticker ticker ticker";
+  min-height: 100vh;
+}
+
+.topbar {
+  grid-area: topbar;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+}
+
+.left {
+  grid-area: left;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+}
+
+.map {
+  grid-area: map;
+  position: relative;
+  min-height: 400px;
+}
+
+.right {
+  grid-area: right;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  padding: 16px;
+}
+
+.legend {
+  grid-area: legend;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(2, 6, 23, 0.9);
+  padding: 12px 16px;
+}
+
+.ticker {
+  grid-area: ticker;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background: #020617;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.badge {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cbd5e1;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.placeholder-block {
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1140px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 64px 340px auto auto auto 44px;
+    grid-template-areas:
+      "topbar"
+      "map"
+      "left"
+      "right"
+      "legend"
+      "ticker";
+  }
+
+  .left,
+  .right {
+    border: none;
+    border-top: 1px solid var(--line);
+  }
+}
