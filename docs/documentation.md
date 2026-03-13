@@ -27,6 +27,8 @@
 - 2026-03-13 07:44 GST: Tightened frontend CSP for runtime compatibility and safety (`worker-src blob:`, `connect-src ws/wss`, dev-only `unsafe-eval`) to support MapLibre worker execution and Next dev tooling.
 - 2026-03-13 07:45 GST: Hardened admin session behavior by removing localStorage session restore and forcing sign-out on `401` responses from protected admin endpoints.
 - 2026-03-13 07:46 GST: Added additional API response headers (`COOP`, `CORP`, API CSP) for stricter browser isolation defaults.
+- 2026-03-13 18:11 GST: Replaced coarse synthetic continent polygons in the web globe with Natural Earth land geometry (`public/data/ne_110m_land.geojson`) and tuned globe styling/visibility for proper Earth rendering.
+- 2026-03-13 18:12 GST: Added globe runtime resiliency improvements (`renderWorldCopies: false`, map error listener, explicit resize handling, compact attribution control).
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -54,6 +56,8 @@
 - 2026-03-13 07:48 GST: Runtime checks passed for same-origin API proxy routes (`/api/v1/markets`, `/api/v1/auth/login`, `/api/v1/admin/sources`) through web/admin servers.
 - 2026-03-13 07:48 GST: Header verification passed for web/admin CSP directives including `worker-src 'self' blob:` and API CSP presence (`default-src 'none'`).
 - 2026-03-13 07:49 GST: Observed and documented a build automation pitfall: running `test` and `build` concurrently causes Next `.next` artifact contention; serial builds are stable.
+- 2026-03-13 18:13 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after globe rendering changes.
+- 2026-03-13 18:14 GST: Runtime checks passed with web/admin/api listeners active and new globe land dataset served at `/data/ne_110m_land.geojson` (`features=127`).
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).

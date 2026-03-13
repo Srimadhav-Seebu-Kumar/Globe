@@ -31,7 +31,7 @@ const style: StyleSpecification = {
       id: "background",
       type: "background",
       paint: {
-        "background-color": "#020617"
+        "background-color": "#031327"
       }
     }
   ]
@@ -76,59 +76,7 @@ const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
   };
 };
 
-const createLandMasses = (): GeoJSON.FeatureCollection<GeoJSON.Polygon> => ({
-  type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      properties: { id: "north-america" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[-168, 12], [-168, 72], [-130, 78], [-95, 83], [-52, 72], [-52, 12], [-168, 12]]]
-      }
-    },
-    {
-      type: "Feature",
-      properties: { id: "south-america" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[-82, -56], [-82, 13], [-60, 13], [-34, -4], [-34, -56], [-82, -56]]]
-      }
-    },
-    {
-      type: "Feature",
-      properties: { id: "eurasia" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[-10, 35], [-10, 72], [40, 77], [100, 80], [180, 70], [180, 35], [-10, 35]]]
-      }
-    },
-    {
-      type: "Feature",
-      properties: { id: "africa" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[-18, -35], [-18, 37], [52, 37], [52, -35], [-18, -35]]]
-      }
-    },
-    {
-      type: "Feature",
-      properties: { id: "australia" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[110, -45], [110, -10], [156, -10], [156, -45], [110, -45]]]
-      }
-    },
-    {
-      type: "Feature",
-      properties: { id: "antarctica" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[-180, -90], [-180, -60], [180, -60], [180, -90], [-180, -90]]]
-      }
-    }
-  ]
-});
+const LANDMASS_GEOJSON_URL = "/data/ne_110m_land.geojson";
 
 export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -178,7 +126,8 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         center: [10, 25],
         zoom: 1.4,
         minZoom: 1,
-        maxZoom: 10
+        maxZoom: 10,
+        renderWorldCopies: false
       });
     } catch (error) {
       setMapError(error instanceof Error ? error.message : "Map initialization failed");
@@ -190,7 +139,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     map.on("load", () => {
       map.addSource("landmass", {
         type: "geojson",
-        data: createLandMasses()
+        data: LANDMASS_GEOJSON_URL
       });
 
       map.addLayer({
@@ -198,8 +147,8 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         type: "fill",
         source: "landmass",
         paint: {
-          "fill-color": "#0f172a",
-          "fill-opacity": 0.9
+          "fill-color": "#1e3a5f",
+          "fill-opacity": 0.88
         }
       });
 
@@ -208,9 +157,9 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         type: "line",
         source: "landmass",
         paint: {
-          "line-color": "#334155",
-          "line-width": 1,
-          "line-opacity": 0.75
+          "line-color": "#67a1cf",
+          "line-width": 0.8,
+          "line-opacity": 0.65
         }
       });
 
@@ -224,9 +173,9 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         type: "line",
         source: "graticule",
         paint: {
-          "line-color": "#1e293b",
-          "line-width": 0.7,
-          "line-opacity": 0.8
+          "line-color": "#3f5e84",
+          "line-width": 0.6,
+          "line-opacity": 0.45
         }
       });
 
@@ -325,9 +274,21 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
       });
     });
 
+    map.on("error", (event) => {
+      const message = event.error instanceof Error ? event.error.message : "Map rendering error";
+      setMapError(message);
+    });
+
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+    const handleResize = () => {
+      map.resize();
+    };
+    globalThis.addEventListener("resize", handleResize);
 
     return () => {
+      globalThis.removeEventListener("resize", handleResize);
       map.remove();
       mapRef.current = null;
     };
