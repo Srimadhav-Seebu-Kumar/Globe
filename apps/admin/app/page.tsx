@@ -38,7 +38,14 @@ interface CollectionResponse<T> {
   data: T[];
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+class UnauthorizedError extends Error {
+  constructor(message = "Session expired") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 const SESSION_STORAGE_KEY = "globe_admin_token";
 
 const fetchCollection = async <T,>(path: string, token: string): Promise<T[]> => {
@@ -48,6 +55,10 @@ const fetchCollection = async <T,>(path: string, token: string): Promise<T[]> =>
       authorization: `Bearer ${token}`
     }
   });
+
+  if (response.status === 401) {
+    throw new UnauthorizedError();
+  }
 
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
@@ -81,14 +92,18 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
 
+  const clearSession = useCallback(() => {
+    setToken("");
+    setSources([]);
+    setReviews([]);
+    globalThis.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
+  }, []);
+
   useEffect(() => {
     const sessionToken = globalThis.sessionStorage.getItem(SESSION_STORAGE_KEY);
-    const legacyToken = globalThis.localStorage.getItem(SESSION_STORAGE_KEY);
-    const restoredToken = sessionToken ?? legacyToken;
-    if (restoredToken) {
-      setToken(restoredToken);
-      globalThis.sessionStorage.setItem(SESSION_STORAGE_KEY, restoredToken);
-      globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
+    if (sessionToken) {
+      setToken(sessionToken);
     }
   }, []);
 
@@ -107,12 +122,18 @@ export default function AdminPage() {
         setSources(sourceRows);
         setReviews(reviewRows);
       } catch (requestError) {
+        if (requestError instanceof UnauthorizedError) {
+          clearSession();
+          setError("Session expired. Sign in again.");
+          return;
+        }
+
         setError(requestError instanceof Error ? requestError.message : "Failed to load admin data");
       } finally {
         setIsLoading(false);
       }
     },
-    []
+    [clearSession]
   );
 
   useEffect(() => {
@@ -141,12 +162,22 @@ export default function AdminPage() {
         }
       });
 
+      if (response.status === 401) {
+        throw new UnauthorizedError();
+      }
+
       if (!response.ok) {
         throw new Error(`Decision update failed (${response.status})`);
       }
 
       await loadAdminData(statusFilter, token);
     } catch (requestError) {
+      if (requestError instanceof UnauthorizedError) {
+        clearSession();
+        setError("Session expired. Sign in again.");
+        return;
+      }
+
       setError(requestError instanceof Error ? requestError.message : "Decision update failed");
     }
   };
@@ -182,12 +213,8 @@ export default function AdminPage() {
   };
 
   const logout = () => {
-    setToken("");
-    setSources([]);
-    setReviews([]);
+    clearSession();
     setError(null);
-    globalThis.sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
   };
 
   return (

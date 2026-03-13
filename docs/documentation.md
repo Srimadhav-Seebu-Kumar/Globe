@@ -23,6 +23,10 @@
 - 2026-03-13 01:15 GST: Upgraded API auth/runtime posture with signed stateless bearer tokens, proxy trust guard (`APP_TRUST_PROXY`), and persistent review-decision store backed by `logs/review-decisions.json`.
 - 2026-03-13 01:15 GST: Hardened deployment containers to run as non-root user (`node`) in runtime stages.
 - 2026-03-13 01:22 GST: Added targeted API tests for parcel legal masking defaults, alert payload redaction, and pagination metadata behavior.
+- 2026-03-13 07:43 GST: Reworked frontend API access to same-origin `/api` proxying in both `web` and `admin` to remove browser CORS coupling and make deployed routing more resilient.
+- 2026-03-13 07:44 GST: Tightened frontend CSP for runtime compatibility and safety (`worker-src blob:`, `connect-src ws/wss`, dev-only `unsafe-eval`) to support MapLibre worker execution and Next dev tooling.
+- 2026-03-13 07:45 GST: Hardened admin session behavior by removing localStorage session restore and forcing sign-out on `401` responses from protected admin endpoints.
+- 2026-03-13 07:46 GST: Added additional API response headers (`COOP`, `CORP`, API CSP) for stricter browser isolation defaults.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -46,6 +50,10 @@
 - 2026-03-13 01:15 GST: Runtime API checks passed for legal-display masking (`/v1/parcels` default and inclusive modes), alert payload shape (`watchlistId` removed), pagination meta (`limit/hasMore`), and authenticated admin source access.
 - 2026-03-13 01:15 GST: Runtime smoke checks passed for local dev servers (`api`/`web`/`admin` each returned `200`, web/admin shell content checks passed).
 - 2026-03-13 01:22 GST: Re-ran full command stack again (`lint`, `typecheck`, `test`, `build`, `audit`) and repeated runtime smoke checks for API/web/admin plus API contract probes; all passed.
+- 2026-03-13 07:47 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, and `npm audit --omit=dev`; all passed after proxy/CSP/session hardening.
+- 2026-03-13 07:48 GST: Runtime checks passed for same-origin API proxy routes (`/api/v1/markets`, `/api/v1/auth/login`, `/api/v1/admin/sources`) through web/admin servers.
+- 2026-03-13 07:48 GST: Header verification passed for web/admin CSP directives including `worker-src 'self' blob:` and API CSP presence (`default-src 'none'`).
+- 2026-03-13 07:49 GST: Observed and documented a build automation pitfall: running `test` and `build` concurrently causes Next `.next` artifact contention; serial builds are stable.
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).

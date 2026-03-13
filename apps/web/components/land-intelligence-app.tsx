@@ -87,7 +87,7 @@ interface CollectionResponse<T> {
   };
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 const formatDateTime = (value: string, timezone?: string): string => {
@@ -331,13 +331,18 @@ export const LandIntelligenceApp = () => {
           id="market-selector"
           className="field-input"
           value={selectedMarketId}
+          disabled={markets.length === 0}
           onChange={(event) => setSelectedMarketId(event.target.value)}
         >
-          {markets.map((market) => (
-            <option key={market.id} value={market.id}>
-              {market.name} ({market.countryCode})
-            </option>
-          ))}
+          {markets.length === 0 ? (
+            <option value="">{isLoading ? "Loading markets..." : "No markets found"}</option>
+          ) : (
+            markets.map((market) => (
+              <option key={market.id} value={market.id}>
+                {market.name} ({market.countryCode})
+              </option>
+            ))
+          )}
         </select>
 
         <p className="field-label">Coverage tiers</p>

@@ -190,6 +190,9 @@ const setSecurityHeaders = (response: ServerResponse): void => {
   response.setHeader("x-frame-options", "DENY");
   response.setHeader("referrer-policy", "strict-origin-when-cross-origin");
   response.setHeader("permissions-policy", "geolocation=(), microphone=(), camera=()");
+  response.setHeader("cross-origin-opener-policy", "same-origin");
+  response.setHeader("cross-origin-resource-policy", "same-site");
+  response.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   response.setHeader("cache-control", "no-store");
 };
 
