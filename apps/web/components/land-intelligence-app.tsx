@@ -90,6 +90,12 @@ interface CollectionResponse<T> {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
+const formatCurrency = (value: number, currency: string): string =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0
+  }).format(value);
 const formatDateTime = (value: string, timezone?: string): string => {
   const parsed = new Date(value);
   if (!timezone) {
@@ -101,6 +107,26 @@ const formatDateTime = (value: string, timezone?: string): string => {
     timeStyle: "short",
     timeZone: timezone
   }).format(parsed);
+};
+
+const formatRelativeTime = (value: string): string => {
+  const now = Date.now();
+  const target = new Date(value).getTime();
+  const diffMs = target - now;
+  const minute = 60_000;
+  const hour = minute * 60;
+  const day = hour * 24;
+
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  if (Math.abs(diffMs) < hour) {
+    return rtf.format(Math.round(diffMs / minute), "minute");
+  }
+
+  if (Math.abs(diffMs) < day) {
+    return rtf.format(Math.round(diffMs / hour), "hour");
+  }
+
+  return rtf.format(Math.round(diffMs / day), "day");
 };
 
 const priceStateLabel = (state: PriceState): string => state.replaceAll("_", " ");
@@ -147,8 +173,10 @@ export const LandIntelligenceApp = () => {
   const [minConfidence, setMinConfidence] = useState<(typeof CONFIDENCE_LABELS)[number]>("low");
   const [windowDays, setWindowDays] = useState<number>(90);
   const [legalDisplayOnly, setLegalDisplayOnly] = useState<boolean>(true);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debouncedQuery = useDebouncedValue(query, 300);
   const debouncedWindowDays = useDebouncedValue(windowDays, 250);
@@ -157,6 +185,66 @@ export const LandIntelligenceApp = () => {
     () => markets.find((market) => market.id === selectedMarketId) ?? null,
     [markets, selectedMarketId]
   );
+
+  const latestRefreshAt = useMemo(() => {
+    const allTimestamps = [
+      ...markets.map((market) => market.updatedAt),
+      ...parcels.map((parcel) => parcel.updatedAt),
+      ...listings.map((listing) => listing.observedAt)
+    ];
+    if (allTimestamps.length === 0) {
+      return null;
+    }
+
+    return allTimestamps.sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+  }, [listings, markets, parcels]);
+
+  const portfolioSummary = useMemo(() => {
+    if (markets.length === 0) {
+      return {
+        averageActivity: 0,
+        legalDisplayRate: 0,
+        tierCounts: {
+          tier_a_global_visibility: 0,
+          tier_b_market_depth: 0,
+          tier_c_parcel_depth: 0
+        }
+      };
+    }
+
+    const totals = markets.reduce(
+      (accumulator, market) => {
+        accumulator.activity += market.activityScore;
+        accumulator.tierCounts[market.coverageTier] += 1;
+        return accumulator;
+      },
+      {
+        activity: 0,
+        tierCounts: {
+          tier_a_global_visibility: 0,
+          tier_b_market_depth: 0,
+          tier_c_parcel_depth: 0
+        }
+      }
+    );
+
+    const legalDisplayCount = parcels.filter((parcel) => parcel.legalDisplayAllowed).length;
+
+    return {
+      averageActivity: Math.round(totals.activity / markets.length),
+      legalDisplayRate: parcels.length > 0 ? Math.round((legalDisplayCount / parcels.length) * 100) : 100,
+      tierCounts: totals.tierCounts
+    };
+  }, [markets, parcels]);
+
+  const resetFilters = () => {
+    setQuery("");
+    setCoverageFilter([...COVERAGE_TIERS]);
+    setStateFilter([...PRICE_STATES]);
+    setMinConfidence("low");
+    setWindowDays(90);
+    setLegalDisplayOnly(true);
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -211,7 +299,7 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, debouncedQuery, debouncedWindowDays, minConfidence, stateFilter]);
+  }, [coverageFilter, debouncedQuery, debouncedWindowDays, minConfidence, refreshTick, stateFilter]);
 
   useEffect(() => {
     if (!selectedMarketId) {
@@ -225,6 +313,7 @@ export const LandIntelligenceApp = () => {
     const controller = new AbortController();
 
     const loadDetails = async () => {
+      setIsDetailsLoading(true);
       try {
         const parcelParams = new URLSearchParams({ marketId: selectedMarketId, legalDisplayOnly: String(legalDisplayOnly) });
         for (const tier of coverageFilter) {
@@ -258,6 +347,10 @@ export const LandIntelligenceApp = () => {
         }
 
         setError(requestError instanceof Error ? requestError.message : "Failed to load market details");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsDetailsLoading(false);
+        }
       }
     };
 
@@ -266,7 +359,7 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, debouncedWindowDays, legalDisplayOnly, selectedMarketId, stateFilter]);
+  }, [coverageFilter, debouncedWindowDays, legalDisplayOnly, refreshTick, selectedMarketId, stateFilter]);
 
   const toggleCoverageTier = (tier: CoverageTier) => {
     setCoverageFilter((previous) => {
@@ -304,9 +397,13 @@ export const LandIntelligenceApp = () => {
           <span className="badge">Live market intelligence</span>
           <span className="badge">{isLoading ? "Refreshing data" : `${markets.length} markets loaded`}</span>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">Window: {windowDays}d</span>
           <span className="badge">Confidence: {minConfidence}</span>
+          <span className="badge">Legal: {legalDisplayOnly ? "Strict" : "Inclusive"}</span>
+          <button type="button" className="action-button" onClick={() => setRefreshTick((value) => value + 1)}>
+            Refresh
+          </button>
         </div>
       </header>
 
@@ -391,7 +488,19 @@ export const LandIntelligenceApp = () => {
         </label>
 
         <p className="muted-text">Restricted parcels are masked by policy.</p>
-        {error ? <p className="error-text">{error}</p> : null}
+        <div className="action-row">
+          <button type="button" className="action-button" onClick={resetFilters}>
+            Reset filters
+          </button>
+        </div>
+        {error ? (
+          <div className="error-block">
+            <p className="error-text">{error}</p>
+            <button type="button" className="action-button" onClick={() => setRefreshTick((value) => value + 1)}>
+              Retry now
+            </button>
+          </div>
+        ) : null}
       </aside>
 
       <section className="map">
@@ -423,6 +532,26 @@ export const LandIntelligenceApp = () => {
                 <p>Timezone</p>
                 <strong>{selectedMarket.timezone}</strong>
               </div>
+              <div className="stat-card">
+                <p>Benchmark</p>
+                <strong>{formatCurrency(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency)}</strong>
+              </div>
+              <div className="stat-card">
+                <p>Avg activity</p>
+                <strong>{portfolioSummary.averageActivity}</strong>
+              </div>
+              <div className="stat-card">
+                <p>Legal display rate</p>
+                <strong>{portfolioSummary.legalDisplayRate}%</strong>
+              </div>
+            </div>
+
+            <div className="coverage-breakdown">
+              <span className="badge">Tier A: {portfolioSummary.tierCounts.tier_a_global_visibility}</span>
+              <span className="badge">Tier B: {portfolioSummary.tierCounts.tier_b_market_depth}</span>
+              <span className="badge">Tier C: {portfolioSummary.tierCounts.tier_c_parcel_depth}</span>
+              <span className="badge">Freshness: {selectedMarket.freshness}</span>
+              <span className="badge">Confidence: {selectedMarket.confidence}</span>
             </div>
 
             <h3 className="section-title" style={{ marginTop: 14 }}>
@@ -458,6 +587,7 @@ export const LandIntelligenceApp = () => {
                   <p>Observed {formatDateTime(listing.observedAt, selectedMarket.timezone)}</p>
                 </article>
               ))}
+              {listings.length === 0 ? <p className="muted-text">No listing observations in this window.</p> : null}
             </div>
 
             <h3 className="section-title" style={{ marginTop: 14 }}>
@@ -471,6 +601,21 @@ export const LandIntelligenceApp = () => {
                   <p>{alert.lastTriggeredAt ? formatDateTime(alert.lastTriggeredAt, selectedMarket.timezone) : "Never triggered"}</p>
                 </article>
               ))}
+              {alerts.length === 0 ? <p className="muted-text">No active alerts for this market.</p> : null}
+            </div>
+
+            <h3 className="section-title" style={{ marginTop: 14 }}>
+              Activity log ({events.length})
+            </h3>
+            <div className="scroll-panel">
+              {events.map((event) => (
+                <article key={event.id} className="list-card">
+                  <strong>{event.summary}</strong>
+                  <p>{event.category}</p>
+                  <p>{formatDateTime(event.occurredAt, selectedMarket.timezone)}</p>
+                </article>
+              ))}
+              {events.length === 0 ? <p className="muted-text">No activity events in selected window.</p> : null}
             </div>
           </>
         ) : (
@@ -482,9 +627,13 @@ export const LandIntelligenceApp = () => {
         <h2 className="section-title">Heat legend and time rail</h2>
         <div className="legend-gradient" />
         <div className="legend-labels">
-          <span>Lower activity</span>
-          <span>Higher activity</span>
+          <span>Lower blended $/sqft</span>
+          <span>Higher blended $/sqft</span>
         </div>
+        <p className="muted-text" style={{ margin: "8px 0 0" }}>
+          Rate model: benchmark $/sqm is converted to $/sqft (÷10.7639), then averaged per map block. Zooming in shrinks block size so
+          each hover average uses fewer, more local samples.
+        </p>
         <label className="field-label" htmlFor="window-range" style={{ marginTop: 10 }}>
           Observation window: {windowDays} days
         </label>
@@ -500,10 +649,16 @@ export const LandIntelligenceApp = () => {
       </section>
 
       <footer className="ticker">
-        {events.length > 0
-          ? events.map((event) => `${formatDateTime(event.occurredAt, selectedMarket?.timezone)} | ${event.summary}`).join("  ||  ")
+        {latestRefreshAt
+          ? `Last refresh ${formatRelativeTime(latestRefreshAt)} (${formatDateTime(latestRefreshAt, selectedMarket?.timezone)})`
           : "No activity events in selected window."}
       </footer>
+
+      {isLoading || isDetailsLoading ? (
+        <div className="loading-overlay" aria-live="polite">
+          {isLoading ? "Syncing market feeds..." : "Loading market detail..."}
+        </div>
+      ) : null}
     </main>
   );
 };

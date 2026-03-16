@@ -13,6 +13,7 @@ interface MarketMapItem {
   };
   coverageTier: CoverageTier;
   activityScore: number;
+  benchmarkPricePerSqm: number;
 }
 
 interface GlobeCanvasProps {
@@ -35,6 +36,127 @@ const style: StyleSpecification = {
       }
     }
   ]
+};
+
+const LANDMASS_GEOJSON_URL = "/data/ne_110m_land.geojson";
+const SQM_TO_SQFT = 10.7639;
+
+const getGridCellSize = (zoom: number): number => {
+  if (zoom < 2) {
+    return 36;
+  }
+
+  if (zoom < 3) {
+    return 20;
+  }
+
+  if (zoom < 4) {
+    return 12;
+  }
+
+  if (zoom < 5) {
+    return 8;
+  }
+
+  if (zoom < 6) {
+    return 4;
+  }
+
+  if (zoom < 7) {
+    return 2;
+  }
+
+  if (zoom < 8) {
+    return 1;
+  }
+
+  if (zoom < 9) {
+    return 0.5;
+  }
+
+  if (zoom < 10) {
+    return 0.25;
+  }
+
+  return 0.125;
+};
+
+const clampLatitude = (latitude: number): number => Math.max(-85, Math.min(85, latitude));
+
+const createPriceBlocks = (markets: MarketMapItem[], zoom: number): GeoJSON.FeatureCollection<GeoJSON.Polygon> => {
+  const cellSize = getGridCellSize(zoom);
+
+  const bucketMap = new Map<
+    string,
+    {
+      lngStart: number;
+      latStart: number;
+      valueSum: number;
+      sampleCount: number;
+    }
+  >();
+
+  for (const market of markets) {
+    if (market.benchmarkPricePerSqm <= 0) {
+      continue;
+    }
+
+    const pricePerSqft = market.benchmarkPricePerSqm / SQM_TO_SQFT;
+    const lngIndex = Math.floor((market.center.lng + 180) / cellSize);
+    const latIndex = Math.floor((clampLatitude(market.center.lat) + 90) / cellSize);
+
+    const lngStart = lngIndex * cellSize - 180;
+    const latStart = latIndex * cellSize - 90;
+    const key = `${lngIndex}:${latIndex}`;
+
+    const existing = bucketMap.get(key);
+    if (existing) {
+      existing.valueSum += pricePerSqft;
+      existing.sampleCount += 1;
+      continue;
+    }
+
+    bucketMap.set(key, {
+      lngStart,
+      latStart,
+      valueSum: pricePerSqft,
+      sampleCount: 1
+    });
+  }
+
+  const features: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
+  for (const [key, value] of bucketMap.entries()) {
+    const lngEnd = Math.min(180, value.lngStart + cellSize);
+    const latEnd = Math.min(85, value.latStart + cellSize);
+    const avgPricePerSqft = value.valueSum / value.sampleCount;
+
+    features.push({
+      type: "Feature",
+      id: key,
+      geometry: {
+        type: "Polygon",
+        coordinates: [
+          [
+            [value.lngStart, value.latStart],
+            [lngEnd, value.latStart],
+            [lngEnd, latEnd],
+            [value.lngStart, latEnd],
+            [value.lngStart, value.latStart]
+          ]
+        ]
+      },
+      properties: {
+        avgPricePerSqft: Number(avgPricePerSqft.toFixed(2)),
+        sampleCount: value.sampleCount,
+        cellSizeDegrees: Number(cellSize.toFixed(3))
+      }
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
 };
 
 const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
@@ -76,15 +198,15 @@ const createGraticule = (): GeoJSON.FeatureCollection<GeoJSON.LineString> => {
   };
 };
 
-const LANDMASS_GEOJSON_URL = "/data/ne_110m_land.geojson";
-
 export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
   const latestFeatureCollectionRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({
     type: "FeatureCollection",
     features: []
   });
+  const latestMarketsRef = useRef<MarketMapItem[]>([]);
   const [mapError, setMapError] = useState<string | null>(null);
 
   const marketFeatureCollection = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(
@@ -102,6 +224,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
           name: market.name,
           coverageTier: market.coverageTier,
           activityScore: market.activityScore,
+          benchmarkPricePerSqft: Number((market.benchmarkPricePerSqm / SQM_TO_SQFT).toFixed(2)),
           selected: market.id === selectedMarketId
         }
       }))
@@ -112,6 +235,10 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
   useEffect(() => {
     latestFeatureCollectionRef.current = marketFeatureCollection;
   }, [marketFeatureCollection]);
+
+  useEffect(() => {
+    latestMarketsRef.current = markets;
+  }, [markets]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) {
@@ -126,7 +253,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         center: [10, 25],
         zoom: 1.4,
         minZoom: 1,
-        maxZoom: 10,
+        maxZoom: 12,
         renderWorldCopies: false
       });
     } catch (error) {
@@ -135,6 +262,16 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     }
 
     mapRef.current = map;
+    popupRef.current = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "price-hover-popup" });
+
+    const updatePriceGridSource = () => {
+      const priceSource = map.getSource("price-grid") as GeoJSONSource | undefined;
+      if (!priceSource) {
+        return;
+      }
+
+      priceSource.setData(createPriceBlocks(latestMarketsRef.current, map.getZoom()));
+    };
 
     map.on("load", () => {
       map.addSource("landmass", {
@@ -176,6 +313,46 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
           "line-color": "#3f5e84",
           "line-width": 0.6,
           "line-opacity": 0.45
+        }
+      });
+
+      map.addSource("price-grid", {
+        type: "geojson",
+        data: createPriceBlocks(latestMarketsRef.current, map.getZoom())
+      });
+
+      map.addLayer({
+        id: "price-grid-fill",
+        type: "fill",
+        source: "price-grid",
+        paint: {
+          "fill-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "avgPricePerSqft"],
+            0,
+            "#9ca3af",
+            12,
+            "#22c55e",
+            30,
+            "#facc15",
+            55,
+            "#ef4444",
+            90,
+            "#a855f7"
+          ],
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 1, 0.32, 6, 0.42, 11, 0.5]
+        }
+      });
+
+      map.addLayer({
+        id: "price-grid-outline",
+        type: "line",
+        source: "price-grid",
+        paint: {
+          "line-color": "rgba(148, 163, 184, 0.55)",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.2, 8, 0.6, 12, 1],
+          "line-opacity": ["interpolate", ["linear"], ["zoom"], 1, 0.2, 12, 0.45]
         }
       });
 
@@ -265,6 +442,33 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         }
       });
 
+      map.on("mousemove", "price-grid-fill", (event) => {
+        const feature = event.features?.[0];
+        const popup = popupRef.current;
+        if (!feature || !popup || !event.lngLat) {
+          return;
+        }
+
+        const avgPrice = Number(feature.properties?.avgPricePerSqft ?? 0);
+        const sampleCount = Number(feature.properties?.sampleCount ?? 0);
+        const cellSize = Number(feature.properties?.cellSizeDegrees ?? 0);
+
+        popup
+          .setLngLat(event.lngLat)
+          .setHTML(
+            `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
+              `<strong style="display:block; margin-bottom:4px;">Avg land rate: $${avgPrice.toFixed(2)}/sqft</strong>` +
+              `<span style="color:#cbd5e1;">Samples in block: ${sampleCount}</span><br/>` +
+              `<span style="color:#94a3b8;">Block size: ${cellSize.toFixed(3)}°</span>` +
+              `</div>`
+          )
+          .addTo(map);
+      });
+
+      map.on("mouseleave", "price-grid-fill", () => {
+        popupRef.current?.remove();
+      });
+
       map.on("mouseenter", "market-circles", () => {
         map.getCanvas().style.cursor = "pointer";
       });
@@ -272,6 +476,8 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
       map.on("mouseleave", "market-circles", () => {
         map.getCanvas().style.cursor = "";
       });
+
+      map.on("zoomend", updatePriceGridSource);
     });
 
     map.on("error", (event) => {
@@ -289,6 +495,8 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
 
     return () => {
       globalThis.removeEventListener("resize", handleResize);
+      popupRef.current?.remove();
+      popupRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -300,21 +508,21 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
       return;
     }
 
+    const applyUpdates = () => {
+      const source = map.getSource("markets") as GeoJSONSource | undefined;
+      source?.setData(marketFeatureCollection);
+
+      const priceSource = map.getSource("price-grid") as GeoJSONSource | undefined;
+      priceSource?.setData(createPriceBlocks(markets, map.getZoom()));
+    };
+
     if (!map.isStyleLoaded()) {
-      map.once("load", () => {
-        const lateSource = map.getSource("markets") as GeoJSONSource | undefined;
-        lateSource?.setData(marketFeatureCollection);
-      });
+      map.once("load", applyUpdates);
       return;
     }
 
-    const source = map.getSource("markets") as GeoJSONSource | undefined;
-    if (!source) {
-      return;
-    }
-
-    source.setData(marketFeatureCollection);
-  }, [marketFeatureCollection]);
+    applyUpdates();
+  }, [marketFeatureCollection, markets]);
 
   useEffect(() => {
     if (!selectedMarketId) {

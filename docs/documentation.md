@@ -30,6 +30,12 @@
 - 2026-03-13 18:11 GST: Replaced coarse synthetic continent polygons in the web globe with Natural Earth land geometry (`public/data/ne_110m_land.geojson`) and tuned globe styling/visibility for proper Earth rendering.
 - 2026-03-13 18:12 GST: Added globe runtime resiliency improvements (`renderWorldCopies: false`, map error listener, explicit resize handling, compact attribution control).
 
+- 2026-03-15 14:22 GST: Upgraded `apps/web` experience with glassmorphism styling, refreshed panel hierarchy, stronger empty/loading states, manual refresh/reset controls, and market portfolio summary metrics while preserving coverage/legal-display guardrails.
+
+- 2026-03-15 14:35 GST: Follow-up web refinement pass added functional resilience improvements: separate detail-loading state, benchmark/freshness/confidence market cards, retry action on failures, relative refresh timestamp ticker, and in-panel activity log while preserving coverage/legal-display policy behavior.
+
+- 2026-03-15 15:05 GST: Added zoom-adaptive global price-grid intelligence on the web globe: converts benchmark $/sqm to $/sqft, aggregates by dynamic geospatial blocks, applies gray→green→yellow→red→purple spectrum, and shows per-block hover averages with sample counts.
+
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
 - 2026-03-12 22:42 GST: `npm run lint` passed across all workspaces.
@@ -58,6 +64,15 @@
 - 2026-03-13 07:49 GST: Observed and documented a build automation pitfall: running `test` and `build` concurrently causes Next `.next` artifact contention; serial builds are stable.
 - 2026-03-13 18:13 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after globe rendering changes.
 - 2026-03-13 18:14 GST: Runtime checks passed with web/admin/api listeners active and new globe land dataset served at `/data/ne_110m_land.geojson` (`features=127`).
+
+- 2026-03-15 14:29 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after web UX refresh.
+- 2026-03-15 14:32 GST: Captured updated web UI screenshot via Playwright against local `dev:web` runtime (`artifacts/web-glassmorphism.png`).
+
+- 2026-03-15 14:40 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after follow-up web refinements.
+- 2026-03-15 14:43 GST: Captured refreshed web UI screenshot via Playwright (`artifacts/web-glassmorphism-v2.png`) with local `dev:api` + `dev:web` running.
+
+- 2026-03-15 15:12 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after global $/sqft hover-grid implementation.
+- 2026-03-15 15:16 GST: Captured globe screenshot with zoom-adaptive $/sqft block overlay via Playwright (`artifacts/web-global-sqft-grid.png`).
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
