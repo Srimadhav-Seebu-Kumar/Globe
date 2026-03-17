@@ -164,6 +164,9 @@
 - 2026-03-17 14:34 GST: Built and pushed `globe-web` image tags `7d62437` and `latest` to ECR (`513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web`) for the interpolation/anchor fix.
 - 2026-03-17 14:34 GST: Redeployed only `globe-web` on EC2 host `i-05d8a4403c1852042` via SSM (`a9a2b736-4eff-4eaf-a51b-e7499fc0ae48`); container now runs `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7d62437` and host root probe remains `HTTP 200`.
 - 2026-03-17 15:59 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after introducing observation-driven per-sqft pricing tiers and benchmark fallbacks.
+- 2026-03-17 16:08 GST: Built and pushed `globe-web` image tags `ce94f05` and `latest` to ECR, then redeployed EC2 web container (`globe-web`) to image `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:ce94f05` via SSM (`c0ea56a8-ab97-45bb-81c0-94932469adfa`).
+- 2026-03-17 16:08 GST: Resolved rollout blocker `no space left on device` during image pull by running Docker cleanup on host (`docker image prune -af`, `docker builder prune -af`) through SSM (`82fe63a1-e0c6-49d7-a09c-e5626a808aa5`), reclaiming ~3.19 GB before successful retry.
+- 2026-03-17 16:08 GST: Hosted availability checks passed after rollout (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`).
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
