@@ -130,7 +130,7 @@ const EMPTY_GRID_FILTER: any = ["==", ["get", "gridId"], ""];
 const style: StyleSpecification = {
   version: 8,
   name: "land-intelligence-globe",
-  projection: { type: "mercator" },
+  projection: { type: "globe" },
   glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   sources: {},
   layers: [
@@ -1380,6 +1380,16 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
     }
 
     mapRef.current = map;
+    map.once("load", () => {
+      try {
+        // Force spherical rendering when supported so the map does not fall back to a flat plane.
+        (map as maplibregl.Map & { setProjection?: (projection: { type: "globe" | "mercator" }) => void }).setProjection?.({
+          type: "globe"
+        });
+      } catch {
+        // Keep running with style projection if runtime projection switching is unavailable.
+      }
+    });
     popupRef.current = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
