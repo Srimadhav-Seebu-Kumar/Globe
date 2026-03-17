@@ -173,6 +173,9 @@
 - 2026-03-17 16:49 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after hover-rise reliability/smoothing changes.
 - 2026-03-17 16:33 GST: Built/pushed `globe-web` tags `7e56ec4` and `latest`, then rolled EC2 web container via SSM (`d4767b08-8535-49dd-97e0-0cb0a9b25522`) to image `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7e56ec4`.
 - 2026-03-17 16:33 GST: Hosted probes after rollout remained healthy (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`) and Playwright screenshot verification confirmed spherical globe geometry in viewport (`live-globe-restored.png`).
+- 2026-03-17 17:02 GST: Refined hover-lift responsiveness in `apps/web/components/globe-canvas.tsx` by switching hover signature tracking to near-pixel pointer movement, adding zoom-aware pointer/influence radii (smaller at high zoom for immediate local response), reducing extrusion transition duration (`36ms`), and passing pointer coordinates through the hover target to prevent rigid/quantized updates.
+- 2026-03-17 17:02 GST: Improved land-cell hit reliability by replacing center-point-only land checks with multi-sample per-cell land detection, reducing false `No land grid cell` gaps where the cell center is off-land but the tile intersects land.
+- 2026-03-17 17:02 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after the hover/land reliability refinements.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).

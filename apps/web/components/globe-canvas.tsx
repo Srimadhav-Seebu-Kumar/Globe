@@ -95,6 +95,8 @@ interface HoverLiftTarget {
   lat: number;
   zoom: number;
   centerGridId?: string;
+  pointerX?: number;
+  pointerY?: number;
 }
 
 interface HoverPointerState {
@@ -594,6 +596,39 @@ const isLandCoordinate = (lng: number, lat: number, polygons: LandPolygon[], lan
   return false;
 };
 
+const isLandCell = (
+  west: number,
+  east: number,
+  south: number,
+  north: number,
+  polygons: LandPolygon[],
+  landIndex?: LandSpatialIndex
+): boolean => {
+  const cellWidth = east - west;
+  const cellHeight = north - south;
+  const samplePoints: [number, number][] = [
+    [0.5, 0.5],
+    [0.18, 0.18],
+    [0.82, 0.18],
+    [0.18, 0.82],
+    [0.82, 0.82],
+    [0.5, 0.18],
+    [0.5, 0.82],
+    [0.18, 0.5],
+    [0.82, 0.5]
+  ];
+
+  for (const [xRatio, yRatio] of samplePoints) {
+    const sampleLng = normalizeLongitude(west + cellWidth * xRatio);
+    const sampleLat = south + cellHeight * yRatio;
+    if (isLandCoordinate(sampleLng, sampleLat, polygons, landIndex)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const getLongitudeRanges = (bounds: maplibregl.LngLatBounds): [number, number][] => {
   const westRaw = bounds.getWest();
   const eastRaw = bounds.getEast();
@@ -713,6 +748,35 @@ const getHoverLiftScale = (zoom: number): number => {
     return 2.9;
   }
   return 3.6;
+};
+
+const getHoverPointerRadiusKm = (zoom: number, stepKm: number): number => {
+  if (zoom < 3) {
+    return Math.max(stepKm * 3.2, 22);
+  }
+  if (zoom < 6) {
+    return Math.max(stepKm * 2.45, 9);
+  }
+  if (zoom < 9) {
+    return Math.max(stepKm * 1.95, 3);
+  }
+  if (zoom < 12) {
+    return Math.max(stepKm * 1.5, 0.9);
+  }
+  return Math.max(stepKm * 1.2, 0.35);
+};
+
+const getHoverInfluenceRadiusKm = (zoom: number, pointerRadiusKm: number, stepKm: number): number => {
+  if (zoom < 4) {
+    return Math.max(pointerRadiusKm * 1.65, stepKm * 4.8);
+  }
+  if (zoom < 8) {
+    return Math.max(pointerRadiusKm * 1.5, stepKm * 3.8);
+  }
+  if (zoom < 12) {
+    return Math.max(pointerRadiusKm * 1.35, stepKm * 3.1);
+  }
+  return Math.max(pointerRadiusKm * 1.25, stepKm * 2.4);
 };
 
 const getHoverLevel = (stepDistance: number): number => {
@@ -1142,7 +1206,7 @@ const createAdaptiveGridFeatureCollection = (
         }
 
         const centerLng = normalizeLongitude(currentLngStart + stepDegrees / 2);
-        if (!isLandCoordinate(centerLng, centerLat, polygons, landIndex)) {
+        if (!isLandCell(currentLngStart, currentLngEnd, currentLatStart, currentLatEnd, polygons, landIndex)) {
           continue;
         }
 
@@ -1444,8 +1508,8 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
       const maxLiftMeters = getHoverLiftMeters(target.zoom);
       const stepKm = Math.max(0.08, centerCell.stepDegrees * 111.32);
-      const pointerRadiusKm = Math.max(stepKm * 3.6, 20);
-      const influenceRadiusKm = Math.max(stepKm * 6.5, 24);
+      const pointerRadiusKm = getHoverPointerRadiusKm(target.zoom, stepKm);
+      const influenceRadiusKm = getHoverInfluenceRadiusKm(target.zoom, pointerRadiusKm, stepKm);
       const nearbyCells = queryNearbyGridCells(
         gridSpatialIndexRef.current,
         latestGridCellsRef.current,
@@ -1524,9 +1588,14 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       if (!target?.centerGridId) {
         return "none";
       }
-      const snappedLng = Math.round(target.lng * 40) / 40;
-      const snappedLat = Math.round(target.lat * 40) / 40;
-      return `${target.centerGridId}:${target.zoom.toFixed(2)}:${snappedLng.toFixed(3)}:${snappedLat.toFixed(3)}`;
+      if (Number.isFinite(target.pointerX) && Number.isFinite(target.pointerY)) {
+        const snappedX = Math.round((target.pointerX ?? 0) * 0.85);
+        const snappedY = Math.round((target.pointerY ?? 0) * 0.85);
+        return `${target.centerGridId}:${target.zoom.toFixed(2)}:${snappedX}:${snappedY}`;
+      }
+      const snappedLng = Math.round(target.lng * 700) / 700;
+      const snappedLat = Math.round(target.lat * 700) / 700;
+      return `${target.centerGridId}:${target.zoom.toFixed(2)}:${snappedLng.toFixed(4)}:${snappedLat.toFixed(4)}`;
     };
 
     const scheduleHoverLiftUpdate = (target: HoverLiftTarget | null) => {
@@ -1825,11 +1894,11 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
             "fill-extrusion-height": 0,
             "fill-extrusion-opacity": 1,
             "fill-extrusion-base-transition": {
-              duration: 80,
+              duration: 36,
               delay: 0
             },
             "fill-extrusion-height-transition": {
-              duration: 80,
+              duration: 36,
               delay: 0
             }
           }
@@ -2030,6 +2099,8 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
                 lng: pointer.lng,
                 lat: pointer.lat,
                 zoom,
+                pointerX: pointer.x,
+                pointerY: pointer.y,
                 ...(activeGridId ? { centerGridId: activeGridId } : {})
               }
             : null
