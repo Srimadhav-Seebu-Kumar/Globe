@@ -13,11 +13,15 @@ type ReviewDecision = {
 const decisionStore = new Map<string, ReviewDecision>();
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
 const configuredStoreFile = process.env.APP_REVIEW_STORE_FILE?.trim();
+const defaultStoreFile =
+  process.env.NODE_ENV === "production"
+    ? "/tmp/globe-review-decisions.json"
+    : path.resolve(repoRoot, "logs/review-decisions.json");
 const storeFile = configuredStoreFile
   ? path.isAbsolute(configuredStoreFile)
     ? configuredStoreFile
     : path.resolve(repoRoot, configuredStoreFile)
-  : path.resolve(repoRoot, "logs/review-decisions.json");
+  : defaultStoreFile;
 
 const hydrateDecisions = (): void => {
   if (!existsSync(storeFile)) {

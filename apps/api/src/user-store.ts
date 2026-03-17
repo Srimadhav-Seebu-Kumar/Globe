@@ -23,11 +23,15 @@ interface PersistedStore {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../");
 const configuredStoreFile = process.env.APP_USER_STORE_FILE?.trim();
+const defaultStoreFile =
+  process.env.NODE_ENV === "production"
+    ? "/tmp/globe-user-workspace.json"
+    : path.resolve(repoRoot, "logs/user-workspace.json");
 const storeFile = configuredStoreFile
   ? path.isAbsolute(configuredStoreFile)
     ? configuredStoreFile
     : path.resolve(repoRoot, configuredStoreFile)
-  : path.resolve(repoRoot, "logs/user-workspace.json");
+  : defaultStoreFile;
 
 const initialStore: PersistedStore = {
   users: [],
