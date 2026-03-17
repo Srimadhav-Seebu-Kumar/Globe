@@ -65,6 +65,7 @@
 - 2026-03-17 12:20 GST: Implemented authenticated end-user workspace APIs in `apps/api` (`/v1/auth/register`, `/v1/me`, `/v1/saved-searches`, `/v1/watchlists`, `/v1/my/alerts`, `/v1/inquiries`) with file-backed persistence in `logs/user-workspace.json`, while preserving operator-only access for admin routes via role-gated auth.
 - 2026-03-17 12:20 GST: Added roadmap-critical intelligence endpoints in `apps/api` for broker profiles (`/v1/brokers`), parcel compare mode (`/v1/compare`), and memo export (`/v1/export/memo`) plus role-safe server routing updates.
 - 2026-03-17 12:20 GST: Upgraded `apps/web/components/land-intelligence-app.tsx` with real user auth UI, persistent save-search/save-market/save-parcel actions, watchlist-linked alerts, inquiry submission from listing cards, compare tray with memo export, broker profile display, and per-parcel/per-listing freshness+confidence visibility.
+- 2026-03-17 13:55 GST: Patched production container persistence defaults in `apps/api/src/user-store.ts` and `apps/api/src/review-store.ts` to use writable `/tmp/*.json` paths when `NODE_ENV=production`, fixing `500` failures on register/write flows under non-root runtime permissions.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -150,6 +151,17 @@
 - 2026-03-17 11:32 GST: Hosted runtime verification passed on `http://54.91.200.14:3000` and `/api` proxy endpoints: trust routes/SEO assets return `200`, updated UX copy is visible, and Dubai detail reflects expanded live depth (`Parcels (5)`, `Price observations (10)`, `Active alerts (3)`, `Activity log (4)`).
 - 2026-03-17 12:20 GST: Re-ran full monorepo gates (`npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`); all commands passed after user workspace + compare/export/inquiry + broker profile implementation.
 - 2026-03-17 12:20 GST: Handler-level functional verification passed for new feature flows (register/login, save search, save watchlist item, my-alerts derivation, compare, export memo, inquiry create/list) using direct API handler invocation with deterministic outputs.
+- 2026-03-17 13:55 GST: Built/pushed incremental container images to ECR for commits `d087868` (web+api feature batch) and `f36f5ae` (API persistence fix), then rolled EC2 containers via SSM (`i-05d8a4403c1852042`) with live `globe-web` and `globe-api` restarts.
+- 2026-03-17 13:55 GST: Resolved deployment blocker (`no space left on device` while pulling new images) by running Docker cleanup on host (`docker image prune -af`, `docker builder prune -af`), reclaiming ~3.2 GB before successful rollout retry.
+- 2026-03-17 13:55 GST: Hosted feature validation passed on `http://54.91.200.14:3000` + `/api`: user register `201`, saved-search create `201`, watchlist create `201`, `my/alerts` linked output, compare response items (`2`), memo export filename returned, inquiry create/list success, and Playwright snapshot confirmed new UI controls (`Save market`, account auth form, parcel save buttons, `Compare mode`, broker profiles, freshness/confidence rows, inquiry actions).
+- 2026-03-17 13:58 GST: Re-verified live trust/discoverability pages over public host (`/`, `/about`, `/methodology`, `/data-sources`, `/legal-display`, `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest`); all returned `HTTP 200`.
+- 2026-03-17 13:59 GST: Re-ran authenticated hosted workflow probe against `/api/v1` with a newly registered user: `register`, `me`, `saved-searches` create/list, `watchlists` create/list, `my/alerts`, `brokers`, `compare`, `export/memo`, and `inquiries` create/list all returned expected success statuses (`200/201`) with non-empty feature data.
+
+## 30/60/90 audit status (2026-03-17)
+- First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
+- Days 31-60: **Done** for scoped app features (accounts, saved searches, alerts, inquiry flow, freshness/confidence states in UI, stale/issue reporting actions, broker profile structure, parcel/listing detail behavior).
+- Days 61-90: **Partially done** (compare mode, export memo, compliance-aware masking/workflows, parcel enrichment scaffolding are live); **not yet complete** = curated real verified listings launch in one market and a documented real-user pilot.
+- After 90 days: **Not started in production scope** (second-market operational rollout, AI-assisted feasibility/search features beyond current heuristic UI, enterprise-grade API/data product packaging).
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
