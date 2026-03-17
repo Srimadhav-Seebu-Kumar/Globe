@@ -177,6 +177,9 @@ const GRID_UPDATE_MIN_INTERVAL_MS = 90;
 const INTERPOLATION_NEIGHBOR_COUNT = 4;
 const INTERPOLATION_DISTANCE_OFFSET_KM = 24;
 const INTERPOLATION_DISTANCE_POWER = 1.35;
+const HOVER_SPREAD_MULTIPLIER = 4;
+const HOVER_VIEWPORT_HEIGHT_RATIO_CAP = 0.2;
+const MAX_HOVER_INFLUENCE_CELLS = 1200;
 const sqftNumberFormatter = new Intl.NumberFormat("en-US");
 const FX_TO_USD: Record<string, number> = {
   USD: 1,
@@ -750,6 +753,21 @@ const getHoverLiftScale = (zoom: number): number => {
   return 3.6;
 };
 
+const getMetersPerPixelAtLatitude = (lat: number, zoom: number): number => {
+  const clampedLat = Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, lat));
+  return (156543.03392 * Math.max(0.15, Math.cos(toRadians(clampedLat)))) / Math.pow(2, zoom);
+};
+
+const getViewportLiftCapMeters = (map: maplibregl.Map, lat: number, zoom: number): number => {
+  const canvas = map.getCanvas();
+  const viewportHeightPx = Math.max(1, canvas.clientHeight || canvas.height || 1);
+  const maxHeightPx = viewportHeightPx * HOVER_VIEWPORT_HEIGHT_RATIO_CAP;
+  const metersPerPixel = getMetersPerPixelAtLatitude(lat, zoom);
+  const pitchRadians = toRadians(Math.max(0, Math.min(78, map.getPitch())));
+  const pitchCompression = Math.max(0.42, Math.cos(pitchRadians));
+  return Math.max(120, metersPerPixel * maxHeightPx * pitchCompression);
+};
+
 const getHoverPointerRadiusKm = (zoom: number, stepKm: number): number => {
   if (zoom < 3) {
     return Math.max(stepKm * 3.2, 22);
@@ -780,17 +798,46 @@ const getHoverInfluenceRadiusKm = (zoom: number, pointerRadiusKm: number, stepKm
 };
 
 const getHoverLevel = (stepDistance: number): number => {
-  if (stepDistance <= 1.15) {
+  if (stepDistance <= 4.6) {
     return 0.75;
   }
-  if (stepDistance <= 2.15) {
+  if (stepDistance <= 8.6) {
     return 0.5;
   }
-  if (stepDistance <= 3.15) {
+  if (stepDistance <= 12.6) {
     return 0.25;
   }
   return 0;
 };
+
+const buildHoverHeightExpression = (entries: Array<{ id: string; height: number }>): any => {
+  if (entries.length === 0) {
+    return 0;
+  }
+
+  const expression: any[] = ["match", ["get", "gridId"]];
+  for (const entry of entries) {
+    expression.push(entry.id, Number(entry.height.toFixed(2)));
+  }
+  expression.push(0);
+  return expression;
+};
+
+const HOVER_RATE_COLOR_EXPRESSION: any = [
+  "interpolate",
+  ["linear"],
+  ["coalesce", ["get", "colorScore"], 0.5],
+  0,
+  "#15803d",
+  0.25,
+  "#16a34a",
+  0.5,
+  "#eab308",
+  0.75,
+  "#f97316",
+  1,
+  "#dc2626"
+];
 
 const getGridStepDistance = (centerCell: GridCellMeta, cell: GridCellMeta): number => {
   const stepDegrees = Math.max(0.00008, centerCell.stepDegrees || cell.stepDegrees || 0.00008);
@@ -1506,25 +1553,62 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         return;
       }
 
-      const maxLiftMeters = getHoverLiftMeters(target.zoom);
+      const configuredLiftMeters = getHoverLiftMeters(target.zoom) * getHoverLiftScale(target.zoom);
+      const viewportLiftCapMeters = getViewportLiftCapMeters(map, centerCell.centerLat, target.zoom);
+      const maxLiftMeters = Math.min(configuredLiftMeters, viewportLiftCapMeters);
       const stepKm = Math.max(0.08, centerCell.stepDegrees * 111.32);
-      const pointerRadiusKm = getHoverPointerRadiusKm(target.zoom, stepKm);
-      const influenceRadiusKm = getHoverInfluenceRadiusKm(target.zoom, pointerRadiusKm, stepKm);
-      const nearbyCells = queryNearbyGridCells(
+      const pointerRadiusKm = getHoverPointerRadiusKm(target.zoom, stepKm) * HOVER_SPREAD_MULTIPLIER;
+      const influenceRadiusKm = getHoverInfluenceRadiusKm(target.zoom, pointerRadiusKm, stepKm) * HOVER_SPREAD_MULTIPLIER;
+      const nearbyCandidates = queryNearbyGridCells(
         gridSpatialIndexRef.current,
         latestGridCellsRef.current,
         target.lng,
         target.lat,
         influenceRadiusKm
       );
+      const nearbyCells = nearbyCandidates
+        .map((cell) => ({
+          cell,
+          pointerDistanceKm: planarDistanceKm(target.lng, target.lat, cell.centerLng, cell.centerLat)
+        }))
+        .filter((entry) => entry.pointerDistanceKm <= influenceRadiusKm * 1.08)
+        .sort((left, right) => left.pointerDistanceKm - right.pointerDistanceKm)
+        .slice(0, MAX_HOVER_INFLUENCE_CELLS);
+      if (nearbyCells.length === 0) {
+        clearHoverLiftState();
+        return;
+      }
+
+      const localRates = nearbyCells
+        .map((entry) => entry.cell.avgPricePerSqft)
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const localRateMin = localRates.length > 0 ? Math.min(...localRates) : 0;
+      const localRateMax = localRates.length > 0 ? Math.max(...localRates) : localRateMin;
+      const localRateRange = Math.max(0.0001, localRateMax - localRateMin);
+
+      const getRateFactor = (cell: GridCellMeta): number => {
+        if (!Number.isFinite(cell.avgPricePerSqft) || cell.avgPricePerSqft <= 0 || localRates.length === 0) {
+          return 0.6;
+        }
+        const normalizedRate = Math.max(0, Math.min(1, (cell.avgPricePerSqft - localRateMin) / localRateRange));
+        return 0.55 + normalizedRate * 1.15;
+      };
+
       const tierIds = {
         tier25: [] as string[],
         tier50: [] as string[],
         tier75: [] as string[],
         tier100: [] as string[]
       };
+      const tierHeights = {
+        tier25: [] as Array<{ id: string; height: number }>,
+        tier50: [] as Array<{ id: string; height: number }>,
+        tier75: [] as Array<{ id: string; height: number }>,
+        tier100: [] as Array<{ id: string; height: number }>
+      };
 
-      for (const cell of nearbyCells) {
+      for (const entry of nearbyCells) {
+        const cell = entry.cell;
         const hoverLevel =
           target.centerGridId === cell.id
             ? 1
@@ -1533,8 +1617,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
                 if (cellStepLevel <= 0) {
                   return 0;
                 }
-                const pointerDistanceKm = planarDistanceKm(target.lng, target.lat, cell.centerLng, cell.centerLat);
-                const pointerRatio = pointerDistanceKm / Math.max(1, pointerRadiusKm);
+                const pointerRatio = entry.pointerDistanceKm / Math.max(0.001, pointerRadiusKm);
                 const pointerLevel =
                   pointerRatio <= 0.38
                     ? 1
@@ -1551,18 +1634,22 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           continue;
         }
 
+        const cellHeight = maxLiftMeters * hoverLevel * getRateFactor(cell);
         if (hoverLevel >= 1) {
           tierIds.tier100.push(cell.id);
+          tierHeights.tier100.push({ id: cell.id, height: cellHeight });
         } else if (hoverLevel >= 0.75) {
           tierIds.tier75.push(cell.id);
+          tierHeights.tier75.push({ id: cell.id, height: cellHeight });
         } else if (hoverLevel >= 0.5) {
           tierIds.tier50.push(cell.id);
+          tierHeights.tier50.push({ id: cell.id, height: cellHeight });
         } else {
           tierIds.tier25.push(cell.id);
+          tierHeights.tier25.push({ id: cell.id, height: cellHeight });
         }
       }
 
-      const liftScale = getHoverLiftScale(target.zoom);
       for (const layer of HOVER_EXTRUSION_LAYERS) {
         if (!map.getLayer(layer.id)) {
           continue;
@@ -1576,11 +1663,19 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
               : layer.level === 0.5
                 ? tierIds.tier50
                 : tierIds.tier25;
+        const layerHeights =
+          layer.level === 1
+            ? tierHeights.tier100
+            : layer.level === 0.75
+              ? tierHeights.tier75
+              : layer.level === 0.5
+                ? tierHeights.tier50
+                : tierHeights.tier25;
         const nextFilter = layerIds.length > 0 ? (["in", ["get", "gridId"], ["literal", layerIds]] as any) : EMPTY_GRID_FILTER;
-        const layerHeight = layerIds.length > 0 ? Number((maxLiftMeters * layer.level * liftScale).toFixed(2)) : 0;
+        const layerHeightExpression = buildHoverHeightExpression(layerHeights);
 
         map.setFilter(layer.id, nextFilter);
-        map.setPaintProperty(layer.id, "fill-extrusion-height", layerHeight);
+        map.setPaintProperty(layer.id, "fill-extrusion-height", layerHeightExpression);
       }
     };
 
@@ -1889,7 +1984,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           source: "land-grid",
           filter: EMPTY_GRID_FILTER,
           paint: {
-            "fill-extrusion-color": layer.color,
+            "fill-extrusion-color": HOVER_RATE_COLOR_EXPRESSION,
             "fill-extrusion-base": 0,
             "fill-extrusion-height": 0,
             "fill-extrusion-opacity": 1,
