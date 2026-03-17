@@ -1,9 +1,14 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
+export type AuthRole = "operator" | "user";
+
 export interface AuthSession {
+  userId: string;
   email: string;
-  role: "operator";
+  role: AuthRole;
+  name: string;
+  createdAt: string;
   expiresAt: number;
 }
 
@@ -70,10 +75,13 @@ const clearExpiredLoginAttempts = (now: number): void => {
   }
 };
 
-const encodeToken = (session: AuthSession): string => {
+export const createSessionToken = (session: AuthSession): string => {
   const payload = {
+    uid: session.userId,
     email: session.email,
     role: session.role,
+    name: session.name,
+    iat: session.createdAt,
     exp: session.expiresAt
   };
   const payloadEncoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
@@ -103,8 +111,16 @@ const decodeToken = (token: string): AuthSession | null => {
     return null;
   }
 
-  const data = payload as { email?: unknown; role?: unknown; exp?: unknown };
-  if (typeof data.email !== "string" || data.role !== "operator" || typeof data.exp !== "number") {
+  const data = payload as {
+    uid?: unknown;
+    email?: unknown;
+    role?: unknown;
+    name?: unknown;
+    iat?: unknown;
+    exp?: unknown;
+  };
+  const validRole = data.role === "operator" || data.role === "user";
+  if (typeof data.email !== "string" || !validRole || typeof data.exp !== "number") {
     return null;
   }
 
@@ -112,9 +128,21 @@ const decodeToken = (token: string): AuthSession | null => {
     return null;
   }
 
+  const createdAt = typeof data.iat === "string" ? data.iat : new Date().toISOString();
+  const userId = typeof data.uid === "string" ? data.uid : `${data.role}:${data.email}`;
+  const name =
+    typeof data.name === "string" && data.name.trim().length > 0
+      ? data.name.trim()
+      : data.role === "operator"
+        ? "Operator"
+        : data.email.split("@")[0] ?? "User";
+
   return {
+    userId,
     email: data.email,
-    role: "operator",
+    role: data.role as AuthRole,
+    name,
+    createdAt,
     expiresAt: data.exp
   };
 };
@@ -172,9 +200,13 @@ export const loginWithCredentials = (
 
   loginAttempts.delete(clientKey);
 
-  const token = encodeToken({
+  const nowIso = new Date(now).toISOString();
+  const token = createSessionToken({
+    userId: `operator:${credentials.email}`,
     email: credentials.email,
     role: "operator",
+    name: "Operator",
+    createdAt: nowIso,
     expiresAt: now + getSessionTtlMs()
   });
 

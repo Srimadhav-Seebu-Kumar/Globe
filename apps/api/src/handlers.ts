@@ -1,17 +1,43 @@
-import { CONFIDENCE_LABELS, COVERAGE_TIERS, PRICE_STATES, type ConfidenceLabel, type CoverageTier, type PriceState } from "@globe/types";
+import {
+  CONFIDENCE_LABELS,
+  COVERAGE_TIERS,
+  PRICE_STATES,
+  type ConfidenceLabel,
+  type CoverageTier,
+  type PriceState
+} from "@globe/types";
 
-import { loginWithCredentials } from "./auth.js";
+import { createSessionToken, loginWithCredentials, type AuthSession } from "./auth.js";
 import type {
   AlertDto,
   ActivityEventDto,
+  BrokerProfileDto,
   CollectionResponse,
+  CompareResponseDto,
+  ExportMemoDto,
+  InquiryDto,
   LoginResponseDto,
   MarketDto,
   ParcelDto,
-  ReviewItemDto
+  ReviewItemDto,
+  SavedSearchDto,
+  UserAlertDto,
+  UserDto,
+  WatchlistItemDto
 } from "./contracts.js";
 import { activityEvents, alerts, listings, markets, parcels, sourceHealthRows } from "./data.js";
 import { listReviewQueue as listPersistedReviewQueue, saveReviewDecision } from "./review-store.js";
+import {
+  authenticateUserAccount,
+  createInquiryForUser,
+  createSavedSearchForUser,
+  createWatchlistItemForUser,
+  getUserById,
+  listInquiriesForUser,
+  listSavedSearchesForUser,
+  listWatchlistItemsForUser,
+  registerUserAccount
+} from "./user-store.js";
 
 const confidenceSet = new Set<string>(CONFIDENCE_LABELS);
 const coverageTierSet = new Set<string>(COVERAGE_TIERS);
@@ -128,6 +154,117 @@ const maskParcelForPolicy = (parcel: ParcelDto): ParcelDto => {
 const sanitizeAlert = (alert: AlertDto): AlertDto => ({
   ...alert
 });
+
+const requireSession = (session?: AuthSession): AuthSession => {
+  if (!session) {
+    throw new Error("Authenticated session is required");
+  }
+  return session;
+};
+
+const toOperatorUser = (session: AuthSession): UserDto => ({
+  id: session.userId,
+  email: session.email,
+  name: session.name,
+  role: "operator",
+  createdAt: session.createdAt
+});
+
+const parseSavedSearchPayload = (body: unknown): Omit<SavedSearchDto, "id" | "userId" | "createdAt" | "updatedAt"> | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as Partial<SavedSearchDto> & { name?: unknown; query?: unknown; legalDisplayOnly?: unknown };
+  const name = typeof payload.name === "string" ? payload.name.trim() : "";
+  const query = typeof payload.query === "string" ? payload.query.trim() : "";
+  const coverageTier = Array.isArray(payload.coverageTier)
+    ? payload.coverageTier.filter((value): value is CoverageTier => typeof value === "string" && coverageTierSet.has(value))
+    : [...COVERAGE_TIERS];
+  const states = Array.isArray(payload.state)
+    ? payload.state.filter((value): value is PriceState => typeof value === "string" && priceStateSet.has(value))
+    : [...PRICE_STATES];
+  const minConfidence =
+    typeof payload.minConfidence === "string" && confidenceSet.has(payload.minConfidence)
+      ? (payload.minConfidence as ConfidenceLabel)
+      : "low";
+  const windowDays =
+    typeof payload.windowDays === "number" && Number.isFinite(payload.windowDays)
+      ? Math.max(7, Math.min(365, Math.round(payload.windowDays)))
+      : 90;
+  const legalDisplayOnly = typeof payload.legalDisplayOnly === "boolean" ? payload.legalDisplayOnly : true;
+  const marketId = typeof payload.marketId === "string" && payload.marketId.trim().length > 0 ? payload.marketId : null;
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    query,
+    coverageTier,
+    state: states,
+    minConfidence,
+    windowDays,
+    legalDisplayOnly,
+    marketId
+  };
+};
+
+const parseWatchlistPayload = (body: unknown): Omit<WatchlistItemDto, "id" | "userId" | "createdAt"> | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as Partial<WatchlistItemDto>;
+  if (payload.type !== "market" && payload.type !== "parcel") {
+    return null;
+  }
+
+  const marketId = typeof payload.marketId === "string" && payload.marketId.trim().length > 0 ? payload.marketId : null;
+  const parcelId = typeof payload.parcelId === "string" && payload.parcelId.trim().length > 0 ? payload.parcelId : null;
+  if (payload.type === "market" && !marketId) {
+    return null;
+  }
+  if (payload.type === "parcel" && !parcelId) {
+    return null;
+  }
+
+  const label =
+    typeof payload.label === "string" && payload.label.trim().length > 0
+      ? payload.label.trim()
+      : payload.type === "market"
+        ? `Saved market ${marketId}`
+        : `Saved parcel ${parcelId}`;
+
+  return {
+    type: payload.type,
+    marketId,
+    parcelId,
+    label
+  };
+};
+
+const parseInquiryPayload = (body: unknown): { listingId: string; message: string } | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as { listingId?: unknown; message?: unknown };
+  if (typeof payload.listingId !== "string" || payload.listingId.trim().length === 0) {
+    return null;
+  }
+
+  const message =
+    typeof payload.message === "string" && payload.message.trim().length > 0
+      ? payload.message.trim()
+      : "Please share latest availability, documentation, and negotiation terms.";
+
+  return {
+    listingId: payload.listingId.trim(),
+    message
+  };
+};
 
 export const health = () => ({
   status: "ok" as const,
@@ -354,23 +491,363 @@ export const listActivityEvents = (url: URL): CollectionResponse<ActivityEventDt
 
 export const login = (body: unknown, clientKey: string): LoginResponseDto => {
   if (!body || typeof body !== "object") {
-    return { ok: false, token: null, email: null, role: null, errorCode: "invalid_credentials" };
+    return { ok: false, token: null, email: null, role: null, user: null, errorCode: "invalid_credentials" };
   }
 
   const payload = body as { email?: string; password?: string };
   if (typeof payload.email !== "string" || typeof payload.password !== "string") {
-    return { ok: false, token: null, email: null, role: null, errorCode: "invalid_credentials" };
+    return { ok: false, token: null, email: null, role: null, user: null, errorCode: "invalid_credentials" };
   }
 
-  const result = loginWithCredentials(payload.email, payload.password, clientKey);
-  if (!result.ok) {
-    return { ok: false, token: null, email: null, role: null, errorCode: result.errorCode };
+  const user = authenticateUserAccount(payload.email, payload.password);
+  if (user) {
+    const now = Date.now();
+    const token = createSessionToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      createdAt: user.createdAt,
+      expiresAt: now + 1000 * 60 * 60 * 12
+    });
+
+    return {
+      ok: true,
+      token,
+      email: user.email,
+      role: user.role,
+      user
+    };
   }
+
+  const operatorResult = loginWithCredentials(payload.email, payload.password, clientKey);
+  if (operatorResult.ok) {
+    const operatorUser: UserDto = {
+      id: `operator:${operatorResult.email}`,
+      email: operatorResult.email,
+      name: "Operator",
+      role: "operator",
+      createdAt: new Date().toISOString()
+    };
+    return {
+      ok: true,
+      token: operatorResult.token,
+      email: operatorResult.email,
+      role: operatorResult.role,
+      user: operatorUser
+    };
+  }
+
+  return { ok: false, token: null, email: null, role: null, user: null, errorCode: operatorResult.errorCode };
+};
+
+export const register = (body: unknown): LoginResponseDto => {
+  if (!body || typeof body !== "object") {
+    return { ok: false, token: null, email: null, role: null, user: null, errorCode: "invalid_payload" };
+  }
+
+  const payload = body as { email?: string; password?: string; name?: string };
+  if (typeof payload.email !== "string" || typeof payload.password !== "string") {
+    return { ok: false, token: null, email: null, role: null, user: null, errorCode: "invalid_payload" };
+  }
+
+  const result = registerUserAccount(payload.email, payload.password, typeof payload.name === "string" ? payload.name : null);
+  if (!result.ok) {
+    return { ok: false, token: null, email: null, role: null, user: null, errorCode: result.errorCode };
+  }
+
+  const user = result.user;
+  const now = Date.now();
+  const token = createSessionToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+    createdAt: user.createdAt,
+    expiresAt: now + 1000 * 60 * 60 * 12
+  });
 
   return {
     ok: true,
-    token: result.token,
-    email: result.email,
-    role: result.role
+    token,
+    email: user.email,
+    role: user.role,
+    user
   };
+};
+
+export const currentUser = (session?: AuthSession): UserDto | null => {
+  const requiredSession = requireSession(session);
+  if (requiredSession.role === "operator") {
+    return toOperatorUser(requiredSession);
+  }
+
+  return getUserById(requiredSession.userId);
+};
+
+export const listSavedSearches = (url: URL, session?: AuthSession): CollectionResponse<SavedSearchDto> => {
+  const requiredSession = requireSession(session);
+  const filtered = listSavedSearchesForUser(requiredSession.userId);
+  const paged = applyPagination(filtered, url, 100, 500);
+  return okResponse(paged.data, paged.total, paged.pagination);
+};
+
+export const createSavedSearch = (
+  body: unknown,
+  session?: AuthSession
+): { ok: true; item: SavedSearchDto } | { ok: false; error: string } => {
+  const requiredSession = requireSession(session);
+  const parsed = parseSavedSearchPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid saved search payload" };
+  }
+
+  const item = createSavedSearchForUser(requiredSession.userId, parsed);
+  return { ok: true, item };
+};
+
+export const listWatchlistItems = (url: URL, session?: AuthSession): CollectionResponse<WatchlistItemDto> => {
+  const requiredSession = requireSession(session);
+  const filtered = listWatchlistItemsForUser(requiredSession.userId);
+  const paged = applyPagination(filtered, url, 100, 500);
+  return okResponse(paged.data, paged.total, paged.pagination);
+};
+
+export const createWatchlistItem = (
+  body: unknown,
+  session?: AuthSession
+): { ok: true; item: WatchlistItemDto } | { ok: false; error: string } => {
+  const requiredSession = requireSession(session);
+  const parsed = parseWatchlistPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid watchlist payload" };
+  }
+
+  const item = createWatchlistItemForUser(requiredSession.userId, parsed);
+  return { ok: true, item };
+};
+
+export const listUserAlerts = (url: URL, session?: AuthSession): CollectionResponse<UserAlertDto> => {
+  const requiredSession = requireSession(session);
+  const activeOnly = url.searchParams.get("activeOnly") !== "false";
+  const watchlistItems = listWatchlistItemsForUser(requiredSession.userId);
+
+  const parcelToMarket = new Map(parcels.map((parcel) => [parcel.id, parcel.marketId]));
+  const linkedAlerts: UserAlertDto[] = [];
+
+  for (const item of watchlistItems) {
+    const marketId =
+      item.type === "market" ? item.marketId : item.parcelId ? parcelToMarket.get(item.parcelId) ?? null : null;
+    if (!marketId) {
+      continue;
+    }
+
+    for (const alert of alerts) {
+      if (alert.marketId !== marketId) {
+        continue;
+      }
+      if (activeOnly && !alert.isActive) {
+        continue;
+      }
+
+      linkedAlerts.push({
+        ...alert,
+        watchlistItemId: item.id,
+        watchlistLabel: item.label
+      });
+    }
+  }
+
+  linkedAlerts.sort((left, right) => {
+    const rightTime = right.lastTriggeredAt ? +new Date(right.lastTriggeredAt) : 0;
+    const leftTime = left.lastTriggeredAt ? +new Date(left.lastTriggeredAt) : 0;
+    return rightTime - leftTime;
+  });
+
+  const paged = applyPagination(linkedAlerts, url, 100, 500);
+  return okResponse(paged.data, paged.total, paged.pagination, {
+    activeOnly: activeOnly.toString()
+  });
+};
+
+export const listBrokerProfiles = (url: URL): CollectionResponse<BrokerProfileDto> => {
+  const marketId = url.searchParams.get("marketId");
+  const brokerMap = new Map<string, BrokerProfileDto>();
+
+  for (const listing of listings) {
+    if (!listing.brokerName) {
+      continue;
+    }
+    if (marketId && listing.marketId !== marketId) {
+      continue;
+    }
+
+    const key = listing.brokerName.trim().toLowerCase();
+    const existing = brokerMap.get(key);
+    if (!existing) {
+      brokerMap.set(key, {
+        id: `broker-${key.replace(/[^a-z0-9]+/g, "-")}`,
+        name: listing.brokerName,
+        marketIds: [listing.marketId],
+        listingCount: 1,
+        verifiedListingCount: listing.state === "broker_verified" ? 1 : 0,
+        lastObservedAt: listing.observedAt,
+        status: listing.state === "broker_verified" ? "verified" : "active"
+      });
+      continue;
+    }
+
+    existing.listingCount += 1;
+    if (!existing.marketIds.includes(listing.marketId)) {
+      existing.marketIds.push(listing.marketId);
+    }
+    if (listing.state === "broker_verified") {
+      existing.verifiedListingCount += 1;
+      existing.status = "verified";
+    }
+    if (!existing.lastObservedAt || +new Date(listing.observedAt) > +new Date(existing.lastObservedAt)) {
+      existing.lastObservedAt = listing.observedAt;
+    }
+  }
+
+  const rows = Array.from(brokerMap.values()).sort((left, right) => right.listingCount - left.listingCount);
+  const paged = applyPagination(rows, url, 100, 500);
+  return okResponse(paged.data, paged.total, paged.pagination, {
+    ...(marketId ? { marketId } : {})
+  });
+};
+
+export const compareParcels = (url: URL): CompareResponseDto => {
+  const parcelIds = parseMultiValue(url, "parcelId");
+  const marketById = new Map(markets.map((market) => [market.id, market]));
+
+  const items = parcelIds
+    .map((parcelId) => parcels.find((parcel) => parcel.id === parcelId))
+    .filter((parcel): parcel is ParcelDto => Boolean(parcel))
+    .map((parcel) => {
+      const parcelListings = listings.filter((listing) => listing.parcelId === parcel.id);
+      const sortedListings = [...parcelListings].sort((left, right) => +new Date(right.observedAt) - +new Date(left.observedAt));
+      const latestListing = sortedListings[0] ?? null;
+      const averageObservedAmount =
+        parcelListings.length > 0
+          ? Math.round(parcelListings.reduce((sum, listing) => sum + listing.amount, 0) / parcelListings.length)
+          : null;
+      const market = marketById.get(parcel.marketId);
+
+      return {
+        parcelId: parcel.id,
+        parcelTitle: parcel.title,
+        marketId: parcel.marketId,
+        marketName: market?.name ?? parcel.marketId,
+        areaSqm: parcel.areaSqm,
+        latestListingState: latestListing?.state ?? null,
+        latestListingAmount: latestListing?.amount ?? null,
+        latestListingCurrencyCode: latestListing?.currencyCode ?? null,
+        latestObservedAt: latestListing?.observedAt ?? null,
+        averageObservedAmount,
+        observationCount: parcelListings.length
+      };
+    });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    items
+  };
+};
+
+export const exportMemo = (body: unknown): ExportMemoDto | { error: string } => {
+  if (!body || typeof body !== "object") {
+    return { error: "Invalid export payload" };
+  }
+
+  const payload = body as { parcelIds?: unknown; notes?: unknown };
+  if (!Array.isArray(payload.parcelIds) || payload.parcelIds.length === 0) {
+    return { error: "parcelIds is required" };
+  }
+
+  const selectedParcels = payload.parcelIds
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((parcelId) => parcels.find((parcel) => parcel.id === parcelId))
+    .filter((parcel): parcel is ParcelDto => Boolean(parcel));
+
+  if (selectedParcels.length === 0) {
+    return { error: "No matching parcels found" };
+  }
+
+  const now = new Date().toISOString();
+  const lines: string[] = [];
+  lines.push("# Globe Land Intelligence - Comparison Memo");
+  lines.push("");
+  lines.push(`Generated at: ${now}`);
+  lines.push("");
+
+  for (const parcel of selectedParcels) {
+    const market = markets.find((candidate) => candidate.id === parcel.marketId);
+    const parcelListings = listings
+      .filter((listing) => listing.parcelId === parcel.id)
+      .sort((left, right) => +new Date(right.observedAt) - +new Date(left.observedAt));
+    const latest = parcelListings[0] ?? null;
+    const avgAmount =
+      parcelListings.length > 0
+        ? Math.round(parcelListings.reduce((sum, listing) => sum + listing.amount, 0) / parcelListings.length)
+        : null;
+
+    lines.push(`## ${parcel.title}`);
+    lines.push(`- Parcel ID: ${parcel.canonicalParcelId}`);
+    lines.push(`- Market: ${market?.name ?? parcel.marketId}`);
+    lines.push(`- Area (sqm): ${parcel.areaSqm}`);
+    lines.push(`- Zoning: ${parcel.zoningCode}`);
+    lines.push(`- Freshness: ${parcel.freshness}`);
+    lines.push(`- Confidence: ${parcel.confidence}`);
+    if (latest) {
+      lines.push(`- Latest observation: ${latest.state} ${latest.currencyCode} ${latest.amount} (${latest.observedAt})`);
+    }
+    if (avgAmount !== null && latest) {
+      lines.push(`- Average observed amount: ${latest.currencyCode} ${avgAmount}`);
+    }
+    lines.push("");
+  }
+
+  const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
+  if (notes) {
+    lines.push("## Analyst Notes");
+    lines.push(notes);
+    lines.push("");
+  }
+
+  return {
+    filename: `land-memo-${new Date().toISOString().slice(0, 10)}.md`,
+    mimeType: "text/markdown",
+    content: lines.join("\n")
+  };
+};
+
+export const listInquiries = (url: URL, session?: AuthSession): CollectionResponse<InquiryDto> => {
+  const requiredSession = requireSession(session);
+  const rows = listInquiriesForUser(requiredSession.userId);
+  const paged = applyPagination(rows, url, 100, 500);
+  return okResponse(paged.data, paged.total, paged.pagination);
+};
+
+export const createInquiry = (
+  body: unknown,
+  session?: AuthSession
+): { ok: true; item: InquiryDto } | { ok: false; error: string } => {
+  const requiredSession = requireSession(session);
+  const parsed = parseInquiryPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid inquiry payload" };
+  }
+
+  const listing = listings.find((item) => item.id === parsed.listingId);
+  if (!listing) {
+    return { ok: false, error: "Listing not found" };
+  }
+
+  const item = createInquiryForUser(requiredSession.userId, {
+    listingId: listing.id,
+    marketId: listing.marketId,
+    message: parsed.message
+  });
+  return { ok: true, item };
 };

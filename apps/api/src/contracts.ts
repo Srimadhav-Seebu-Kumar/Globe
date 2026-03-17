@@ -115,8 +115,98 @@ export interface LoginResponseDto {
   ok: boolean;
   token: string | null;
   email: string | null;
-  role: "operator" | null;
-  errorCode?: "invalid_credentials" | "auth_unconfigured" | "rate_limited";
+  role: "operator" | "user" | null;
+  user: UserDto | null;
+  errorCode?:
+    | "invalid_credentials"
+    | "auth_unconfigured"
+    | "rate_limited"
+    | "email_taken"
+    | "weak_password"
+    | "invalid_payload";
+}
+
+export interface UserDto {
+  id: string;
+  email: string;
+  name: string;
+  role: "operator" | "user";
+  createdAt: string;
+}
+
+export interface SavedSearchDto {
+  id: string;
+  userId: string;
+  name: string;
+  query: string;
+  coverageTier: CoverageTier[];
+  state: PriceState[];
+  minConfidence: ConfidenceLabel;
+  windowDays: number;
+  legalDisplayOnly: boolean;
+  marketId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WatchlistItemDto {
+  id: string;
+  userId: string;
+  type: "market" | "parcel";
+  marketId: string | null;
+  parcelId: string | null;
+  label: string;
+  createdAt: string;
+}
+
+export interface UserAlertDto extends AlertDto {
+  watchlistItemId: string;
+  watchlistLabel: string;
+}
+
+export interface BrokerProfileDto {
+  id: string;
+  name: string;
+  marketIds: string[];
+  listingCount: number;
+  verifiedListingCount: number;
+  lastObservedAt: string | null;
+  status: "verified" | "active";
+}
+
+export interface CompareItemDto {
+  parcelId: string;
+  parcelTitle: string;
+  marketId: string;
+  marketName: string;
+  areaSqm: number;
+  latestListingState: PriceState | null;
+  latestListingAmount: number | null;
+  latestListingCurrencyCode: string | null;
+  latestObservedAt: string | null;
+  averageObservedAmount: number | null;
+  observationCount: number;
+}
+
+export interface CompareResponseDto {
+  generatedAt: string;
+  items: CompareItemDto[];
+}
+
+export interface ExportMemoDto {
+  filename: string;
+  mimeType: "text/markdown";
+  content: string;
+}
+
+export interface InquiryDto {
+  id: string;
+  userId: string;
+  listingId: string;
+  marketId: string;
+  message: string;
+  status: "submitted" | "acknowledged";
+  createdAt: string;
 }
 
 export interface CollectionResponse<T> {

@@ -81,6 +81,98 @@ interface ActivityEventDto {
   category: "listing" | "transaction" | "planning" | "verification";
 }
 
+interface UserDto {
+  id: string;
+  email: string;
+  name: string;
+  role: "operator" | "user";
+  createdAt: string;
+}
+
+interface SavedSearchDto {
+  id: string;
+  userId: string;
+  name: string;
+  query: string;
+  coverageTier: CoverageTier[];
+  state: PriceState[];
+  minConfidence: (typeof CONFIDENCE_LABELS)[number];
+  windowDays: number;
+  legalDisplayOnly: boolean;
+  marketId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface WatchlistItemDto {
+  id: string;
+  userId: string;
+  type: "market" | "parcel";
+  marketId: string | null;
+  parcelId: string | null;
+  label: string;
+  createdAt: string;
+}
+
+interface UserAlertDto extends AlertDto {
+  watchlistItemId: string;
+  watchlistLabel: string;
+}
+
+interface BrokerProfileDto {
+  id: string;
+  name: string;
+  marketIds: string[];
+  listingCount: number;
+  verifiedListingCount: number;
+  lastObservedAt: string | null;
+  status: "verified" | "active";
+}
+
+interface CompareItemDto {
+  parcelId: string;
+  parcelTitle: string;
+  marketId: string;
+  marketName: string;
+  areaSqm: number;
+  latestListingState: PriceState | null;
+  latestListingAmount: number | null;
+  latestListingCurrencyCode: string | null;
+  latestObservedAt: string | null;
+  averageObservedAmount: number | null;
+  observationCount: number;
+}
+
+interface CompareResponseDto {
+  generatedAt: string;
+  items: CompareItemDto[];
+}
+
+interface ExportMemoDto {
+  filename: string;
+  mimeType: "text/markdown";
+  content: string;
+}
+
+interface InquiryDto {
+  id: string;
+  userId: string;
+  listingId: string;
+  marketId: string;
+  message: string;
+  status: "submitted" | "acknowledged";
+  createdAt: string;
+}
+
+interface AuthResponseDto {
+  ok: boolean;
+  token: string | null;
+  email: string | null;
+  role: "operator" | "user" | null;
+  user: UserDto | null;
+  errorCode?: string;
+}
+
 interface CollectionResponse<T> {
   data: T[];
   meta: {
@@ -89,6 +181,7 @@ interface CollectionResponse<T> {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
+const USER_SESSION_STORAGE_KEY = "globe_web_user_token";
 const SQM_TO_SQFT = 10.7639;
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
@@ -159,10 +252,29 @@ const useDebouncedValue = <T,>(value: T, delayMs: number): T => {
   return debounced;
 };
 
-const fetchCollection = async <T,>(path: string, signal?: AbortSignal): Promise<T[]> => {
+const buildHeaders = (token?: string): HeadersInit => {
+  if (!token) {
+    return {};
+  }
+
+  return {
+    authorization: `Bearer ${token}`
+  };
+};
+
+const fetchCollection = async <T,>(
+  path: string,
+  options?: {
+    signal?: AbortSignal;
+    token?: string;
+  }
+): Promise<T[]> => {
   const requestInit: RequestInit = { cache: "no-store" };
-  if (signal) {
-    requestInit.signal = signal;
+  if (options?.signal) {
+    requestInit.signal = options.signal;
+  }
+  if (options?.token) {
+    requestInit.headers = buildHeaders(options.token);
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, requestInit);
@@ -174,12 +286,48 @@ const fetchCollection = async <T,>(path: string, signal?: AbortSignal): Promise<
   return payload.data;
 };
 
+const fetchResource = async <T,>(
+  path: string,
+  options?: {
+    signal?: AbortSignal;
+    token?: string;
+  }
+): Promise<T> => {
+  const headers = buildHeaders(options?.token);
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
+    ...(options?.signal ? { signal: options.signal } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {})
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed for ${path}: ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+};
+
 export const LandIntelligenceApp = () => {
   const [markets, setMarkets] = useState<MarketDto[]>([]);
   const [parcels, setParcels] = useState<ParcelDto[]>([]);
   const [listings, setListings] = useState<ListingDto[]>([]);
   const [alerts, setAlerts] = useState<AlertDto[]>([]);
   const [events, setEvents] = useState<ActivityEventDto[]>([]);
+  const [savedSearches, setSavedSearches] = useState<SavedSearchDto[]>([]);
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistItemDto[]>([]);
+  const [userAlerts, setUserAlerts] = useState<UserAlertDto[]>([]);
+  const [brokerProfiles, setBrokerProfiles] = useState<BrokerProfileDto[]>([]);
+  const [inquiries, setInquiries] = useState<InquiryDto[]>([]);
+  const [compareParcelIds, setCompareParcelIds] = useState<string[]>([]);
+  const [compareResult, setCompareResult] = useState<CompareResponseDto | null>(null);
+
+  const [authToken, setAuthToken] = useState("");
+  const [currentUser, setCurrentUser] = useState<UserDto | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");
@@ -259,6 +407,39 @@ export const LandIntelligenceApp = () => {
     };
   }, [markets, parcels]);
 
+  const clearAuthSession = () => {
+    setAuthToken("");
+    setCurrentUser(null);
+    setSavedSearches([]);
+    setWatchlistItems([]);
+    setUserAlerts([]);
+    setInquiries([]);
+    setAuthMessage(null);
+    globalThis.sessionStorage.removeItem(USER_SESSION_STORAGE_KEY);
+  };
+
+  const refreshUserWorkspace = async (token: string): Promise<void> => {
+    const [savedSearchRows, watchlistRows, userAlertRows, inquiryRows] = await Promise.all([
+      fetchCollection<SavedSearchDto>("/v1/saved-searches?limit=200", { token }),
+      fetchCollection<WatchlistItemDto>("/v1/watchlists?limit=200", { token }),
+      fetchCollection<UserAlertDto>("/v1/my/alerts?activeOnly=true&limit=200", { token }),
+      fetchCollection<InquiryDto>("/v1/inquiries?limit=100", { token })
+    ]);
+
+    setSavedSearches(savedSearchRows);
+    setWatchlistItems(watchlistRows);
+    setUserAlerts(userAlertRows);
+    setInquiries(inquiryRows);
+  };
+
+  const isAuthError = (value: unknown): boolean =>
+    value instanceof Error && (value.message.includes(": 401") || value.message.includes(": 403"));
+
+  const createAuthToken = (token: string): void => {
+    setAuthToken(token);
+    globalThis.sessionStorage.setItem(USER_SESSION_STORAGE_KEY, token);
+  };
+
   const resetFilters = () => {
     setQuery("");
     setCoverageFilter([...COVERAGE_TIERS]);
@@ -268,6 +449,53 @@ export const LandIntelligenceApp = () => {
     setLegalDisplayOnly(true);
     setActionNote(null);
   };
+
+  useEffect(() => {
+    const token = globalThis.sessionStorage.getItem(USER_SESSION_STORAGE_KEY);
+    if (!token) {
+      return;
+    }
+
+    setAuthToken(token);
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadUser = async () => {
+      try {
+        const profile = await fetchResource<UserDto | null>("/v1/me", { token: authToken, signal: controller.signal });
+        if (!profile) {
+          clearAuthSession();
+          return;
+        }
+        setCurrentUser(profile);
+        await refreshUserWorkspace(authToken);
+      } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (isAuthError(requestError)) {
+          clearAuthSession();
+          setActionNote("Your session expired. Sign in again.");
+          return;
+        }
+
+        setError(requestError instanceof Error ? requestError.message : "Failed to load user workspace");
+      }
+    };
+
+    void loadUser();
+
+    return () => {
+      controller.abort();
+    };
+  }, [authToken, refreshTick]);
 
   useEffect(() => {
     const params = new URLSearchParams(globalThis.location.search);
@@ -332,7 +560,7 @@ export const LandIntelligenceApp = () => {
         params.set("windowDays", String(debouncedWindowDays));
         params.set("limit", "100");
 
-        const data = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`, controller.signal);
+        const data = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`, { signal: controller.signal });
         setMarkets(data);
 
         setSelectedMarketId((previous) => {
@@ -396,10 +624,10 @@ export const LandIntelligenceApp = () => {
         eventParams.set("limit", "100");
 
         const [parcelRows, listingRows, alertRows, eventRows] = await Promise.all([
-          fetchCollection<ParcelDto>(`/v1/parcels?${parcelParams.toString()}`, controller.signal),
-          fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`, controller.signal),
-          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true&limit=50`, controller.signal),
-          fetchCollection<ActivityEventDto>(`/v1/events?${eventParams.toString()}`, controller.signal)
+          fetchCollection<ParcelDto>(`/v1/parcels?${parcelParams.toString()}`, { signal: controller.signal }),
+          fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`, { signal: controller.signal }),
+          fetchCollection<AlertDto>(`/v1/alerts?marketId=${selectedMarketId}&activeOnly=true&limit=50`, { signal: controller.signal }),
+          fetchCollection<ActivityEventDto>(`/v1/events?${eventParams.toString()}`, { signal: controller.signal })
         ]);
 
         setParcels(parcelRows);
@@ -425,6 +653,36 @@ export const LandIntelligenceApp = () => {
       controller.abort();
     };
   }, [coverageFilter, debouncedWindowDays, isHydratedFromUrl, legalDisplayOnly, refreshTick, selectedMarketId, stateFilter]);
+
+  useEffect(() => {
+    if (!selectedMarketId) {
+      setBrokerProfiles([]);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadBrokerProfiles = async () => {
+      try {
+        const rows = await fetchCollection<BrokerProfileDto>(`/v1/brokers?marketId=${selectedMarketId}&limit=100`, {
+          signal: controller.signal
+        });
+        setBrokerProfiles(rows);
+      } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setError(requestError instanceof Error ? requestError.message : "Failed to load broker profiles");
+      }
+    };
+
+    void loadBrokerProfiles();
+
+    return () => {
+      controller.abort();
+    };
+  }, [refreshTick, selectedMarketId]);
 
   useEffect(() => {
     if (!isHydratedFromUrl) {
@@ -487,6 +745,264 @@ export const LandIntelligenceApp = () => {
     });
   };
 
+  const authenticateUser = async () => {
+    setAuthMessage(null);
+    const email = authEmail.trim().toLowerCase();
+    if (!email || !authPassword) {
+      setAuthMessage("Enter email and password.");
+      return;
+    }
+
+    const endpoint = authMode === "register" ? "/v1/auth/register" : "/v1/auth/login";
+    const body =
+      authMode === "register"
+        ? { email, password: authPassword, name: authName.trim() || null }
+        : { email, password: authPassword };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const payload = (await response.json()) as AuthResponseDto;
+      if (!response.ok || !payload.ok || !payload.token || !payload.user) {
+        const fallback = response.status === 409 ? "Email already registered." : "Authentication failed.";
+        setAuthMessage(payload.errorCode ? `Auth error: ${payload.errorCode}` : fallback);
+        return;
+      }
+
+      createAuthToken(payload.token);
+      setCurrentUser(payload.user);
+      setAuthPassword("");
+      setAuthMode("login");
+      setActionNote(`Signed in as ${payload.user.name}.`);
+      await refreshUserWorkspace(payload.token);
+    } catch (requestError) {
+      setAuthMessage(requestError instanceof Error ? requestError.message : "Authentication request failed");
+    }
+  };
+
+  const logoutUser = () => {
+    clearAuthSession();
+    setActionNote("Signed out.");
+  };
+
+  const saveCurrentSearch = async () => {
+    if (!authToken || !currentUser) {
+      setActionNote("Sign in to save searches.");
+      return;
+    }
+
+    const payload = {
+      name: `${selectedMarket?.name ?? "Global"} search (${new Date().toLocaleDateString()})`,
+      query: query.trim(),
+      coverageTier: coverageFilter,
+      state: stateFilter,
+      minConfidence,
+      windowDays,
+      legalDisplayOnly,
+      marketId: selectedMarketId || null
+    };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/saved-searches`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const result = (await response.json()) as { ok: boolean; item?: SavedSearchDto; error?: string };
+      if (!response.ok || !result.ok || !result.item) {
+        setActionNote(result.error ?? "Could not save search.");
+        return;
+      }
+
+      setSavedSearches((previous) => [result.item as SavedSearchDto, ...previous]);
+      setActionNote(`Saved search: ${result.item.name}`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Could not save search.");
+    }
+  };
+
+  const saveMarketWatchlist = async () => {
+    if (!authToken || !currentUser || !selectedMarket) {
+      setActionNote("Sign in and select a market to save.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/watchlists`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          type: "market",
+          marketId: selectedMarket.id,
+          parcelId: null,
+          label: `${selectedMarket.name} market watch`
+        })
+      });
+      const result = (await response.json()) as { ok: boolean; item?: WatchlistItemDto; error?: string };
+      if (!response.ok || !result.ok || !result.item) {
+        setActionNote(result.error ?? "Could not save market watch.");
+        return;
+      }
+
+      setWatchlistItems((previous) => [result.item as WatchlistItemDto, ...previous.filter((item) => item.id !== result.item?.id)]);
+      setActionNote(`Saved market watch: ${selectedMarket.name}`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Could not save market watch.");
+    }
+  };
+
+  const saveParcelWatchlist = async (parcel: ParcelDto) => {
+    if (!authToken || !currentUser) {
+      setActionNote("Sign in to save parcels.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/watchlists`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          type: "parcel",
+          marketId: parcel.marketId,
+          parcelId: parcel.id,
+          label: `${parcel.title}`
+        })
+      });
+      const result = (await response.json()) as { ok: boolean; item?: WatchlistItemDto; error?: string };
+      if (!response.ok || !result.ok || !result.item) {
+        setActionNote(result.error ?? "Could not save parcel.");
+        return;
+      }
+
+      setWatchlistItems((previous) => [result.item as WatchlistItemDto, ...previous.filter((item) => item.id !== result.item?.id)]);
+      setActionNote(`Saved parcel: ${parcel.title}`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Could not save parcel.");
+    }
+  };
+
+  const toggleCompareParcel = (parcelId: string) => {
+    setCompareParcelIds((previous) => {
+      if (previous.includes(parcelId)) {
+        return previous.filter((value) => value !== parcelId);
+      }
+      if (previous.length >= 6) {
+        return previous;
+      }
+      return [...previous, parcelId];
+    });
+  };
+
+  const runCompare = async () => {
+    if (compareParcelIds.length === 0) {
+      setActionNote("Choose at least one parcel for compare mode.");
+      return;
+    }
+
+    const params = new URLSearchParams();
+    for (const parcelId of compareParcelIds) {
+      params.append("parcelId", parcelId);
+    }
+
+    try {
+      const payload = await fetchResource<CompareResponseDto>(`/v1/compare?${params.toString()}`);
+      setCompareResult(payload);
+      setActionNote(`Compared ${payload.items.length} parcel(s).`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Compare request failed.");
+    }
+  };
+
+  const exportCompareMemo = async () => {
+    if (!authToken || !currentUser) {
+      setActionNote("Sign in to export comparison memos.");
+      return;
+    }
+    if (compareParcelIds.length === 0) {
+      setActionNote("Choose parcels first, then export.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/export/memo`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          parcelIds: compareParcelIds,
+          notes: `Generated by ${currentUser.name}`
+        })
+      });
+      const payload = (await response.json()) as ExportMemoDto | { error: string };
+      if (!response.ok || !("content" in payload)) {
+        setActionNote("Could not export memo.");
+        return;
+      }
+
+      const blob = new Blob([payload.content], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = payload.filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setActionNote(`Memo exported: ${payload.filename}`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Could not export memo.");
+    }
+  };
+
+  const submitInquiry = async (listing: ListingDto) => {
+    if (!authToken || !currentUser) {
+      setActionNote("Sign in to send listing inquiries.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/inquiries`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          listingId: listing.id,
+          message: `Inquiry for ${listing.reference}: please share due diligence pack and latest terms.`
+        })
+      });
+      const payload = (await response.json()) as { ok: boolean; item?: InquiryDto; error?: string };
+      if (!response.ok || !payload.ok || !payload.item) {
+        setActionNote(payload.error ?? "Inquiry could not be sent.");
+        return;
+      }
+
+      setInquiries((previous) => [payload.item as InquiryDto, ...previous]);
+      setActionNote(`Inquiry sent for ${listing.reference}.`);
+    } catch (requestError) {
+      setActionNote(requestError instanceof Error ? requestError.message : "Inquiry could not be sent.");
+    }
+  };
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -514,9 +1030,15 @@ export const LandIntelligenceApp = () => {
           <span className="badge">Min confidence: {minConfidence}</span>
           {selectedMarket ? <span className="badge">Market confidence: {selectedMarket.confidence}</span> : null}
           <span className="badge">Legal: {legalDisplayOnly ? "Strict" : "Inclusive"}</span>
+          {currentUser ? <span className="badge">User: {currentUser.name}</span> : <span className="badge">Guest</span>}
           <a className="action-button" href="mailto:hello@globelandintelligence.com?subject=Globe%20Land%20Intelligence%20Demo%20Request">
             Request demo
           </a>
+          {currentUser ? (
+            <button type="button" className="action-button" onClick={logoutUser}>
+              Sign out
+            </button>
+          ) : null}
           <button type="button" className="action-button" onClick={() => setRefreshTick((value) => value + 1)}>
             Refresh
           </button>
@@ -611,19 +1133,11 @@ export const LandIntelligenceApp = () => {
         </div>
         <p className="field-label">Workflow</p>
         <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className="action-button"
-            onClick={() => setActionNote("Saved searches are in rollout. Request early access to enable persistent watchlists.")}
-          >
+          <button type="button" className="action-button" onClick={() => void saveCurrentSearch()}>
             Save search
           </button>
-          <button
-            type="button"
-            className="action-button"
-            onClick={() => setActionNote("Parcel shortlists are in rollout. Request early access to enable collaboration and notes.")}
-          >
-            Save parcel
+          <button type="button" className="action-button" onClick={() => void saveMarketWatchlist()}>
+            Save market
           </button>
           <a className="action-button" href="mailto:listings@globelandintelligence.com?subject=Submit%20Land%20Listing">
             Add listing
@@ -632,6 +1146,71 @@ export const LandIntelligenceApp = () => {
             Report issue
           </a>
         </div>
+        <p className="field-label" style={{ marginTop: 14 }}>
+          Account
+        </p>
+        {currentUser ? (
+          <div className="control-group">
+            <p className="muted-text">
+              Signed in as {currentUser.name} ({currentUser.email})
+            </p>
+            <p className="muted-text">
+              Saved searches: {savedSearches.length} | Watchlist items: {watchlistItems.length} | My alerts: {userAlerts.length}
+            </p>
+            <p className="muted-text">Inquiries sent: {inquiries.length}</p>
+          </div>
+        ) : (
+          <div className="control-group">
+            <label className="field-label" htmlFor="auth-email">
+              Email
+            </label>
+            <input
+              id="auth-email"
+              className="field-input"
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+              placeholder="you@example.com"
+            />
+            <label className="field-label" htmlFor="auth-password">
+              Password
+            </label>
+            <input
+              id="auth-password"
+              className="field-input"
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="Minimum 8 characters"
+            />
+            {authMode === "register" ? (
+              <>
+                <label className="field-label" htmlFor="auth-name">
+                  Name
+                </label>
+                <input
+                  id="auth-name"
+                  className="field-input"
+                  value={authName}
+                  onChange={(event) => setAuthName(event.target.value)}
+                  placeholder="Analyst name"
+                />
+              </>
+            ) : null}
+            <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="action-button" onClick={() => void authenticateUser()}>
+                {authMode === "register" ? "Create account" : "Sign in"}
+              </button>
+              <button
+                type="button"
+                className="action-button"
+                onClick={() => setAuthMode((mode) => (mode === "login" ? "register" : "login"))}
+              >
+                {authMode === "login" ? "Need account?" : "Have account?"}
+              </button>
+            </div>
+            {authMessage ? <p className="muted-text">{authMessage}</p> : null}
+          </div>
+        )}
         {actionNote ? <p className="muted-text">{actionNote}</p> : null}
         {error ? (
           <div className="error-block">
@@ -708,6 +1287,17 @@ export const LandIntelligenceApp = () => {
                   <strong>{parcel.legalDisplayAllowed ? parcel.title : "Restricted parcel"}</strong>
                   <p>{parcel.legalDisplayAllowed ? parcel.canonicalParcelId : "REDACTED"}</p>
                   <p>{parcel.legalDisplayAllowed ? `${formatNumber(parcel.areaSqm)} sqm | ${parcel.zoningCode}` : "Display masked by policy"}</p>
+                  <p>
+                    Freshness: {parcel.freshness} | Confidence: {parcel.confidence}
+                  </p>
+                  <div className="action-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button type="button" className="action-button" onClick={() => toggleCompareParcel(parcel.id)}>
+                      {compareParcelIds.includes(parcel.id) ? "Remove compare" : "Add compare"}
+                    </button>
+                    <button type="button" className="action-button" onClick={() => void saveParcelWatchlist(parcel)}>
+                      Save parcel
+                    </button>
+                  </div>
                 </article>
               ))}
               {parcels.length === 0 ? <p className="muted-text">No parcels match current filters.</p> : null}
@@ -730,6 +1320,14 @@ export const LandIntelligenceApp = () => {
                     {listing.brokerName ? ` | ${listing.brokerName}` : ""}
                   </p>
                   <p>Observed {formatDateTime(listing.observedAt, selectedMarket.timezone)}</p>
+                  <p>
+                    Freshness: {listing.freshness} | Confidence: {listing.confidence}
+                  </p>
+                  <div className="action-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button type="button" className="action-button" onClick={() => void submitInquiry(listing)}>
+                      Send inquiry
+                    </button>
+                  </div>
                 </article>
               ))}
               {listings.length === 0 ? <p className="muted-text">No listing observations in this window.</p> : null}
@@ -747,6 +1345,77 @@ export const LandIntelligenceApp = () => {
                 </article>
               ))}
               {alerts.length === 0 ? <p className="muted-text">No active alerts for this market.</p> : null}
+            </div>
+
+            <h3 className="section-title" style={{ marginTop: 14 }}>
+              My watchlist alerts ({userAlerts.length})
+            </h3>
+            <div className="scroll-panel">
+              {userAlerts.map((alert) => (
+                <article key={`${alert.id}-${alert.watchlistItemId}`} className="list-card">
+                  <strong>{alert.title}</strong>
+                  <p>{alert.watchlistLabel}</p>
+                  <p>{alert.ruleType}</p>
+                  <p>{alert.lastTriggeredAt ? formatDateTime(alert.lastTriggeredAt, selectedMarket.timezone) : "Never triggered"}</p>
+                </article>
+              ))}
+              {userAlerts.length === 0 ? <p className="muted-text">No watchlist alerts yet.</p> : null}
+            </div>
+
+            <h3 className="section-title" style={{ marginTop: 14 }}>
+              Broker profiles ({brokerProfiles.length})
+            </h3>
+            <div className="scroll-panel">
+              {brokerProfiles.map((broker) => (
+                <article key={broker.id} className="list-card">
+                  <strong>{broker.name}</strong>
+                  <p>
+                    Listings: {broker.listingCount} | Verified: {broker.verifiedListingCount}
+                  </p>
+                  <p>Status: {broker.status}</p>
+                  <p>{broker.lastObservedAt ? `Last observed ${formatDateTime(broker.lastObservedAt, selectedMarket.timezone)}` : "No recent observations"}</p>
+                </article>
+              ))}
+              {brokerProfiles.length === 0 ? <p className="muted-text">No broker profiles for this market.</p> : null}
+            </div>
+
+            <h3 className="section-title" style={{ marginTop: 14 }}>
+              Compare mode ({compareParcelIds.length})
+            </h3>
+            <div className="scroll-panel">
+              <p className="muted-text">Selected parcel IDs: {compareParcelIds.length > 0 ? compareParcelIds.join(", ") : "None selected"}</p>
+              <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="action-button" onClick={() => void runCompare()}>
+                  Run compare
+                </button>
+                <button type="button" className="action-button" onClick={() => void exportCompareMemo()}>
+                  Export memo
+                </button>
+                <button type="button" className="action-button" onClick={() => setCompareParcelIds([])}>
+                  Clear
+                </button>
+              </div>
+              {compareResult?.items?.map((item) => (
+                <article key={item.parcelId} className="list-card">
+                  <strong>{item.parcelTitle}</strong>
+                  <p>
+                    {item.marketName} | {formatNumber(item.areaSqm)} sqm
+                  </p>
+                  <p>
+                    Latest:{" "}
+                    {item.latestListingAmount !== null && item.latestListingCurrencyCode
+                      ? `${item.latestListingState ?? "n/a"} ${item.latestListingCurrencyCode} ${formatNumber(item.latestListingAmount)}`
+                      : "No observations"}
+                  </p>
+                  <p>
+                    Avg observed:{" "}
+                    {item.averageObservedAmount !== null && item.latestListingCurrencyCode
+                      ? `${item.latestListingCurrencyCode} ${formatNumber(item.averageObservedAmount)}`
+                      : "n/a"}
+                  </p>
+                  <p>Observation count: {item.observationCount}</p>
+                </article>
+              ))}
             </div>
 
             <h3 className="section-title" style={{ marginTop: 14 }}>
@@ -785,7 +1454,7 @@ export const LandIntelligenceApp = () => {
           policy before decisions.
         </p>
         <p className="muted-text" style={{ margin: "6px 0 0" }}>
-          <Link href="/methodology">Methodology</Link> · <Link href="/data-sources">Data sources</Link> ·{" "}
+          <Link href="/methodology">Methodology</Link> | <Link href="/data-sources">Data sources</Link> |{" "}
           <Link href="/legal-display">Legal display policy</Link>
         </p>
         <label className="field-label" htmlFor="window-range" style={{ marginTop: 10 }}>

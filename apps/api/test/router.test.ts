@@ -23,4 +23,16 @@ test("resolveRoute extracts params from POST review decision route", () => {
   assert.equal(reviewRoute?.params.id, "r-001");
   assert.equal(reviewRoute?.params.decision, "approve");
   assert.equal(reviewRoute?.definition.requiresAuth, true);
+  assert.equal(reviewRoute?.definition.requiredRole, "operator");
+});
+
+test("resolveRoute includes authenticated user workspace endpoints", () => {
+  const meRoute = resolveRoute(createRequest("GET", "/v1/me"));
+  assert.equal(meRoute?.definition.requiresAuth, true);
+
+  const savedSearchesRoute = resolveRoute(createRequest("POST", "/v1/saved-searches"));
+  assert.equal(savedSearchesRoute?.definition.requiresAuth, true);
+
+  const compareRoute = resolveRoute(createRequest("GET", "/v1/compare?parcelId=p-dxb-001"));
+  assert.equal(compareRoute?.definition.description.includes("Compare selected parcels"), true);
 });

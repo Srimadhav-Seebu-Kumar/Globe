@@ -62,6 +62,9 @@
 - 2026-03-17 11:32 GST: Addressed audit data-UX inconsistencies by clarifying confidence badges (`min confidence` vs `market confidence`), normalizing grid-rate messaging to USD-equivalent units, and surfacing benchmark units as both local-currency `/sqm` and `/sqft`.
 - 2026-03-17 11:32 GST: Added conversion/workflow actions directly in the web UI (request demo, add listing, report issue, save-search/parcel rollout notices), URL deep-link persistence for filters/market state, and mobile/tap map interaction fallback (`click`/`touchstart`/`touchmove`) for hover-dependent workflows.
 - 2026-03-17 11:32 GST: Expanded seeded Dubai depth in `apps/api/src/data.ts` with additional parcel/listing/alert/activity records to reduce proof-of-concept thinness and better reflect live workflow density in the detail panel.
+- 2026-03-17 12:20 GST: Implemented authenticated end-user workspace APIs in `apps/api` (`/v1/auth/register`, `/v1/me`, `/v1/saved-searches`, `/v1/watchlists`, `/v1/my/alerts`, `/v1/inquiries`) with file-backed persistence in `logs/user-workspace.json`, while preserving operator-only access for admin routes via role-gated auth.
+- 2026-03-17 12:20 GST: Added roadmap-critical intelligence endpoints in `apps/api` for broker profiles (`/v1/brokers`), parcel compare mode (`/v1/compare`), and memo export (`/v1/export/memo`) plus role-safe server routing updates.
+- 2026-03-17 12:20 GST: Upgraded `apps/web/components/land-intelligence-app.tsx` with real user auth UI, persistent save-search/save-market/save-parcel actions, watchlist-linked alerts, inquiry submission from listing cards, compare tray with memo export, broker profile display, and per-parcel/per-listing freshness+confidence visibility.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -145,10 +148,13 @@
 - 2026-03-17 11:32 GST: Local Playwright validation on `http://127.0.0.1:3100` confirmed URL-state hydration (`q/coverage/state/minConfidence/windowDays/legalDisplayOnly/marketId`), URL persistence on filter changes, tap/click-triggered map popup behavior, and benchmark/confidence label clarity.
 - 2026-03-17 11:32 GST: Deployed multiple incremental batches to AWS EC2-hosted stack (`i-05d8a4403c1852042`, `54.91.200.14`) by building/pushing `globe-web` and `globe-api` images to ECR and restarting containers via SSM; deployment command IDs logged (`17573b0b-a239-4cec-8a2f-053f3a31f9fb`, `9a7ffecc-5986-4403-971c-4c056d7849b9`, `d42d44d4-cda9-494c-b9a9-cb7d97c5d462`).
 - 2026-03-17 11:32 GST: Hosted runtime verification passed on `http://54.91.200.14:3000` and `/api` proxy endpoints: trust routes/SEO assets return `200`, updated UX copy is visible, and Dubai detail reflects expanded live depth (`Parcels (5)`, `Price observations (10)`, `Active alerts (3)`, `Activity log (4)`).
+- 2026-03-17 12:20 GST: Re-ran full monorepo gates (`npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`); all commands passed after user workspace + compare/export/inquiry + broker profile implementation.
+- 2026-03-17 12:20 GST: Handler-level functional verification passed for new feature flows (register/login, save search, save watchlist item, my-alerts derivation, compare, export memo, inquiry create/list) using direct API handler invocation with deterministic outputs.
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
 - Review decisions are now persisted to local disk (`logs/review-decisions.json`) but not yet moved to Postgres/Redis for HA durability.
 - Auth uses signed stateless bearer tokens; revocation list/session analytics are not yet centralized in Redis.
+- Public trusted domain + HTTPS are not yet configured in live hosting; current production endpoint remains HTTP on instance IP.
 - AWS deployment workflows are committed, but first deployment requires valid AWS API credentials (access key/secret or SSO session) and GitHub repository secrets.
 - Production `npm run start -w @globe/web` and `npm run start -w @globe/admin` could not be fully smoke-automated in this session due execution policy blocking those background command patterns; dev/runtime + build verification is passing.

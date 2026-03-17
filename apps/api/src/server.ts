@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 
-import { authorizeRequest } from "./auth.js";
+import { authorizeRequest, type AuthSession } from "./auth.js";
 import { resolveRoute, writeJson, writeNoContent } from "./router.js";
 
 const port = Number(process.env.PORT ?? 4000);
@@ -89,12 +89,22 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  let authSession: AuthSession | undefined;
   if (resolved.definition.requiresAuth) {
     const authResult = authorizeRequest(request);
     if (!authResult.ok) {
       writeJson(request, response, 401, {
         error: "Unauthorized",
         errorCode: authResult.errorCode
+      });
+      return;
+    }
+
+    authSession = authResult.session;
+    if (resolved.definition.requiredRole && authResult.session.role !== resolved.definition.requiredRole) {
+      writeJson(request, response, 403, {
+        error: "Forbidden",
+        message: "Insufficient role"
       });
       return;
     }
@@ -115,7 +125,8 @@ const server = createServer(async (request, response) => {
       request,
       url,
       params: resolved.params,
-      body: bodyResult.value
+      body: bodyResult.value,
+      ...(authSession ? { session: authSession } : {})
     });
 
     const statusCode = resolved.definition.statusResolver

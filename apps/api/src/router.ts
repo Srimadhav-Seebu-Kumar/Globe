@@ -1,16 +1,28 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { getClientKey } from "./auth.js";
+import { getClientKey, type AuthRole, type AuthSession } from "./auth.js";
 import {
+  compareParcels,
+  createInquiry,
+  createSavedSearch,
+  createWatchlistItem,
+  currentUser,
+  exportMemo,
   health,
   listActivityEvents,
   listAlerts,
+  listBrokerProfiles,
+  listInquiries,
   listListings,
   listMarkets,
   listParcels,
   listReviewQueue,
+  listSavedSearches,
   listSourceHealth,
+  listUserAlerts,
+  listWatchlistItems,
   login,
+  register,
   setReviewDecision
 } from "./handlers.js";
 
@@ -21,6 +33,7 @@ export interface RouteContext {
   url: URL;
   params: Record<string, string>;
   body: unknown;
+  session?: AuthSession;
 }
 
 export type RouteHandler = (context: RouteContext) => unknown;
@@ -33,6 +46,7 @@ interface RouteDefinition {
   handler: RouteHandler;
   statusResolver?: StatusResolver;
   requiresAuth?: boolean;
+  requiredRole?: AuthRole;
 }
 
 export const routes: RouteDefinition[] = [
@@ -74,44 +88,33 @@ export const routes: RouteDefinition[] = [
   },
   {
     method: "GET",
-    pattern: /^\/v1\/admin\/sources$/,
-    description: "Source health telemetry",
-    handler: ({ url }) => listSourceHealth(url),
-    requiresAuth: true
+    pattern: /^\/v1\/brokers$/,
+    description: "Broker and agency profile summary",
+    handler: ({ url }) => listBrokerProfiles(url)
   },
   {
     method: "GET",
-    pattern: /^\/v1\/admin\/reviews$/,
-    description: "Review queue",
-    handler: ({ url }) => listReviewQueue(url),
-    requiresAuth: true
+    pattern: /^\/v1\/compare$/,
+    description: "Compare selected parcels",
+    handler: ({ url }) => compareParcels(url)
   },
   {
     method: "POST",
-    pattern: /^\/v1\/admin\/reviews\/(?<id>[^/]+)\/(?<decision>approve|reject)$/,
-    description: "Apply review decision",
-    handler: ({ params }) => {
-      if (!params.id || !params.decision) {
-        return { ok: false, review: null };
-      }
-
-      const decision = params.decision === "approve" ? "approved" : "rejected";
-      return setReviewDecision(params.id, decision);
-    },
+    pattern: /^\/v1\/export\/memo$/,
+    description: "Export parcel comparison memo",
+    handler: ({ body }) => exportMemo(body),
     statusResolver: (payload) => {
-      if (typeof payload !== "object" || !payload || !("ok" in payload)) {
-        return 200;
+      if (typeof payload === "object" && payload && "error" in payload) {
+        return 400;
       }
-
-      const result = payload as { ok: boolean };
-      return result.ok ? 200 : 404;
+      return 200;
     },
     requiresAuth: true
   },
   {
     method: "POST",
     pattern: /^\/v1\/auth\/login$/,
-    description: "Local login endpoint",
+    description: "User and operator login endpoint",
     handler: ({ body, request }) => login(body, getClientKey(request)),
     statusResolver: (payload) => {
       if (typeof payload !== "object" || !payload) {
@@ -133,6 +136,148 @@ export const routes: RouteDefinition[] = [
 
       return 401;
     }
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/auth\/register$/,
+    description: "Register an end-user account",
+    handler: ({ body }) => register(body),
+    statusResolver: (payload) => {
+      if (typeof payload !== "object" || !payload) {
+        return 500;
+      }
+
+      const result = payload as { ok?: boolean; errorCode?: string };
+      if (result.ok) {
+        return 201;
+      }
+
+      if (result.errorCode === "email_taken") {
+        return 409;
+      }
+
+      if (result.errorCode === "weak_password" || result.errorCode === "invalid_payload") {
+        return 422;
+      }
+
+      return 400;
+    }
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/me$/,
+    description: "Get current authenticated user",
+    handler: ({ session }) => currentUser(session),
+    requiresAuth: true
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/saved-searches$/,
+    description: "List user saved searches",
+    handler: ({ url, session }) => listSavedSearches(url, session),
+    requiresAuth: true
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/saved-searches$/,
+    description: "Create user saved search",
+    handler: ({ body, session }) => createSavedSearch(body, session),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 400;
+      }
+      return 500;
+    },
+    requiresAuth: true
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/watchlists$/,
+    description: "List user watchlist items",
+    handler: ({ url, session }) => listWatchlistItems(url, session),
+    requiresAuth: true
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/watchlists$/,
+    description: "Create user watchlist item",
+    handler: ({ body, session }) => createWatchlistItem(body, session),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 400;
+      }
+      return 500;
+    },
+    requiresAuth: true
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/my\/alerts$/,
+    description: "List alerts linked to user watchlist items",
+    handler: ({ url, session }) => listUserAlerts(url, session),
+    requiresAuth: true
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/inquiries$/,
+    description: "List user listing inquiries",
+    handler: ({ url, session }) => listInquiries(url, session),
+    requiresAuth: true
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/inquiries$/,
+    description: "Submit a listing inquiry",
+    handler: ({ body, session }) => createInquiry(body, session),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 400;
+      }
+      return 500;
+    },
+    requiresAuth: true
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/admin\/sources$/,
+    description: "Source health telemetry",
+    handler: ({ url }) => listSourceHealth(url),
+    requiresAuth: true,
+    requiredRole: "operator"
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/admin\/reviews$/,
+    description: "Review queue",
+    handler: ({ url }) => listReviewQueue(url),
+    requiresAuth: true,
+    requiredRole: "operator"
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/admin\/reviews\/(?<id>[^/]+)\/(?<decision>approve|reject)$/,
+    description: "Apply review decision",
+    handler: ({ params }) => {
+      if (!params.id || !params.decision) {
+        return { ok: false, review: null };
+      }
+
+      const decision = params.decision === "approve" ? "approved" : "rejected";
+      return setReviewDecision(params.id, decision);
+    },
+    statusResolver: (payload) => {
+      if (typeof payload !== "object" || !payload || !("ok" in payload)) {
+        return 200;
+      }
+
+      const result = payload as { ok: boolean };
+      return result.ok ? 200 : 404;
+    },
+    requiresAuth: true,
+    requiredRole: "operator"
   }
 ];
 
