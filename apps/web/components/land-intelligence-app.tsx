@@ -89,6 +89,7 @@ interface CollectionResponse<T> {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
+const SQM_TO_SQFT = 10.7639;
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 const formatCurrency = (value: number, currency: string): string =>
@@ -96,6 +97,13 @@ const formatCurrency = (value: number, currency: string): string =>
     style: "currency",
     currency,
     maximumFractionDigits: 0
+  }).format(value);
+const formatCurrencyPrecise = (value: number, currency: string): string =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(value);
 const formatDateTime = (value: string, timezone?: string): string => {
   const parsed = new Date(value);
@@ -179,12 +187,18 @@ export const LandIntelligenceApp = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
   const debouncedQuery = useDebouncedValue(query, 300);
   const debouncedWindowDays = useDebouncedValue(windowDays, 250);
 
   const selectedMarket = useMemo(
     () => markets.find((market) => market.id === selectedMarketId) ?? null,
     [markets, selectedMarketId]
+  );
+
+  const selectedMarketBenchmarkPerSqft = useMemo(
+    () => (selectedMarket ? selectedMarket.benchmarkPricePerSqm / SQM_TO_SQFT : null),
+    [selectedMarket]
   );
 
   const latestRefreshAt = useMemo(() => {
@@ -395,7 +409,7 @@ export const LandIntelligenceApp = () => {
       <header className="topbar">
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <strong>Globe Land Intelligence</strong>
-          <span className="badge">Live market intelligence</span>
+          <span className="badge">Verified parcel intelligence</span>
           <span className="badge">{isLoading ? "Refreshing data" : `${markets.length} markets loaded`}</span>
           <nav className="topbar-links" aria-label="Trust and documentation pages">
             <Link className="topbar-link" href="/about">
@@ -414,7 +428,8 @@ export const LandIntelligenceApp = () => {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">Window: {windowDays}d</span>
-          <span className="badge">Confidence: {minConfidence}</span>
+          <span className="badge">Min confidence: {minConfidence}</span>
+          {selectedMarket ? <span className="badge">Market confidence: {selectedMarket.confidence}</span> : null}
           <span className="badge">Legal: {legalDisplayOnly ? "Strict" : "Inclusive"}</span>
           <a className="action-button" href="mailto:hello@globelandintelligence.com?subject=Globe%20Land%20Intelligence%20Demo%20Request">
             Request demo
@@ -511,6 +526,30 @@ export const LandIntelligenceApp = () => {
             Reset filters
           </button>
         </div>
+        <p className="field-label">Workflow</p>
+        <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="action-button"
+            onClick={() => setActionNote("Saved searches are in rollout. Request early access to enable persistent watchlists.")}
+          >
+            Save search
+          </button>
+          <button
+            type="button"
+            className="action-button"
+            onClick={() => setActionNote("Parcel shortlists are in rollout. Request early access to enable collaboration and notes.")}
+          >
+            Save parcel
+          </button>
+          <a className="action-button" href="mailto:listings@globelandintelligence.com?subject=Submit%20Land%20Listing">
+            Add listing
+          </a>
+          <a className="action-button" href="mailto:support@globelandintelligence.com?subject=Report%20Duplicate%20or%20Stale%20Listing">
+            Report issue
+          </a>
+        </div>
+        {actionNote ? <p className="muted-text">{actionNote}</p> : null}
         {error ? (
           <div className="error-block">
             <p className="error-text">{error}</p>
@@ -552,7 +591,12 @@ export const LandIntelligenceApp = () => {
               </div>
               <div className="stat-card">
                 <p>Benchmark</p>
-                <strong>{formatCurrency(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency)}</strong>
+                <strong>{formatCurrency(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency)} /sqm</strong>
+                <p style={{ marginTop: 4 }}>
+                  {selectedMarketBenchmarkPerSqft !== null
+                    ? `${formatCurrencyPrecise(selectedMarketBenchmarkPerSqft, selectedMarket.benchmarkCurrency)} /sqft`
+                    : "n/a"}
+                </p>
               </div>
               <div className="stat-card">
                 <p>Avg activity</p>
@@ -645,13 +689,21 @@ export const LandIntelligenceApp = () => {
         <h2 className="section-title">Heat legend and time rail</h2>
         <div className="legend-gradient" />
         <div className="legend-labels">
-          <span>Lower blended $/sqft</span>
-          <span>Higher blended $/sqft</span>
+          <span>Lower blended USD-eq /sqft</span>
+          <span>Higher blended USD-eq /sqft</span>
         </div>
         <p className="muted-text" style={{ margin: "8px 0 0" }}>
-          Rate model: benchmark $/sqm is converted to $/sqft (divide by 10.7639), then rendered as a 3D adaptive land-only grid. Zooming
-          in increases tile density and shrinks tile area; zooming out coarsens cells for performance. Hover land tiles to raise nearby
-          cells instantly and inspect blended rate + nearest major city context.
+          Rate model: market benchmarks are normalized to USD-equivalent per square foot for cross-market comparability, then rendered as
+          a 3D adaptive land-only grid. Zooming in increases tile density and shrinks tile area; zooming out coarsens cells for
+          performance.
+        </p>
+        <p className="muted-text" style={{ margin: "6px 0 0" }}>
+          Quick read: 1) pick a market, 2) hover/tap a land tile, 3) review nearest city plus blended rate, 4) validate provenance and
+          policy before decisions.
+        </p>
+        <p className="muted-text" style={{ margin: "6px 0 0" }}>
+          <Link href="/methodology">Methodology</Link> · <Link href="/data-sources">Data sources</Link> ·{" "}
+          <Link href="/legal-display">Legal display policy</Link>
         </p>
         <label className="field-label" htmlFor="window-range" style={{ marginTop: 10 }}>
           Observation window: {windowDays} days
