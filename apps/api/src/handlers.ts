@@ -15,6 +15,7 @@ import type {
   CollectionResponse,
   CompareResponseDto,
   ExportMemoDto,
+  IntakeSubmissionDto,
   InquiryDto,
   LoginResponseDto,
   MarketDto,
@@ -26,6 +27,11 @@ import type {
   WatchlistItemDto
 } from "./contracts.js";
 import { activityEvents, alerts, listings, markets, parcels, sourceHealthRows } from "./data.js";
+import {
+  createIntakeSubmission,
+  listIntakeSubmissions as listPersistedIntakeSubmissions,
+  setIntakeSubmissionDecision
+} from "./intake-store.js";
 import { listReviewQueue as listPersistedReviewQueue, saveReviewDecision } from "./review-store.js";
 import {
   authenticateUserAccount,
@@ -264,6 +270,163 @@ const parseInquiryPayload = (body: unknown): { listingId: string; message: strin
     listingId: payload.listingId.trim(),
     message
   };
+};
+
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+
+const parseDemoRequestPayload = (body: unknown): {
+  fullName: string;
+  email: string;
+  company: string;
+  marketFocus: string;
+  details: string;
+} | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as {
+    fullName?: unknown;
+    email?: unknown;
+    company?: unknown;
+    marketFocus?: unknown;
+    details?: unknown;
+  };
+
+  const fullName = typeof payload.fullName === "string" ? payload.fullName.trim() : "";
+  const email = typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
+  const company = typeof payload.company === "string" ? payload.company.trim() : "";
+  const marketFocus = typeof payload.marketFocus === "string" ? payload.marketFocus.trim() : "";
+  const details = typeof payload.details === "string" ? payload.details.trim() : "";
+
+  if (!fullName || !email.includes("@")) {
+    return null;
+  }
+
+  return {
+    fullName,
+    email,
+    company: company || "Not provided",
+    marketFocus: marketFocus || "Global",
+    details: details || "No additional details supplied."
+  };
+};
+
+const parseListingSubmissionPayload = (body: unknown): {
+  marketId: string;
+  title: string;
+  listingReference: string;
+  currencyCode: string;
+  amount: number;
+  state: PriceState;
+  sourceName: string;
+  brokerName: string;
+  parcelId: string | null;
+  details: string;
+} | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as {
+    marketId?: unknown;
+    title?: unknown;
+    listingReference?: unknown;
+    currencyCode?: unknown;
+    amount?: unknown;
+    state?: unknown;
+    sourceName?: unknown;
+    brokerName?: unknown;
+    parcelId?: unknown;
+    details?: unknown;
+  };
+
+  const marketId = typeof payload.marketId === "string" ? payload.marketId.trim() : "";
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const listingReference = typeof payload.listingReference === "string" ? payload.listingReference.trim() : "";
+  const currencyCode = typeof payload.currencyCode === "string" ? payload.currencyCode.trim().toUpperCase() : "USD";
+  const amount = typeof payload.amount === "number" ? payload.amount : Number(payload.amount ?? Number.NaN);
+  const sourceName = typeof payload.sourceName === "string" ? payload.sourceName.trim() : "";
+  const brokerName = typeof payload.brokerName === "string" ? payload.brokerName.trim() : "";
+  const parcelId =
+    typeof payload.parcelId === "string" && payload.parcelId.trim().length > 0 ? payload.parcelId.trim() : null;
+  const details = typeof payload.details === "string" ? payload.details.trim() : "";
+  const state =
+    typeof payload.state === "string" && priceStateSet.has(payload.state) ? (payload.state as PriceState) : "ask";
+
+  const marketExists = markets.some((market) => market.id === marketId);
+  if (!marketExists || !title || !listingReference || !sourceName || !Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  return {
+    marketId,
+    title,
+    listingReference,
+    currencyCode,
+    amount: Math.round(amount),
+    state,
+    sourceName,
+    brokerName: brokerName || "Unspecified",
+    parcelId,
+    details: details || "No additional listing notes."
+  };
+};
+
+const parseIssueReportPayload = (body: unknown): {
+  email: string;
+  marketId: string | null;
+  title: string;
+  issueType: string;
+  description: string;
+  listingReference: string;
+} | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as {
+    email?: unknown;
+    marketId?: unknown;
+    title?: unknown;
+    issueType?: unknown;
+    description?: unknown;
+    listingReference?: unknown;
+  };
+
+  const email = typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
+  const marketIdRaw = typeof payload.marketId === "string" ? payload.marketId.trim() : "";
+  const marketId = marketIdRaw.length > 0 ? marketIdRaw : null;
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const issueType = typeof payload.issueType === "string" ? payload.issueType.trim() : "";
+  const description = typeof payload.description === "string" ? payload.description.trim() : "";
+  const listingReference = typeof payload.listingReference === "string" ? payload.listingReference.trim() : "";
+
+  if (!email.includes("@") || !title || !description) {
+    return null;
+  }
+
+  return {
+    email,
+    marketId,
+    title,
+    issueType: issueType || "data_quality",
+    description,
+    listingReference: listingReference || "Not provided"
+  };
+};
+
+const parsePasswordResetPayload = (body: unknown): { email: string } | null => {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+
+  const payload = body as { email?: unknown };
+  const email = typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
+  if (!email.includes("@")) {
+    return null;
+  }
+  return { email };
 };
 
 export const health = () => ({
@@ -851,3 +1014,143 @@ export const createInquiry = (
   });
   return { ok: true, item };
 };
+
+export const createDemoRequest = (
+  body: unknown
+): { ok: true; item: IntakeSubmissionDto } | { ok: false; error: string } => {
+  const parsed = parseDemoRequestPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid demo request payload" };
+  }
+
+  const item = createIntakeSubmission({
+    type: "demo_request",
+    submittedByUserId: null,
+    marketId: null,
+    title: `Demo request - ${parsed.fullName}`,
+    description: parsed.details,
+    priority: "medium",
+    payload: {
+      fullName: parsed.fullName,
+      email: parsed.email,
+      company: parsed.company,
+      marketFocus: parsed.marketFocus,
+      details: parsed.details
+    }
+  });
+
+  return { ok: true, item };
+};
+
+export const createListingSubmission = (
+  body: unknown,
+  session?: AuthSession
+): { ok: true; item: IntakeSubmissionDto } | { ok: false; error: string } => {
+  const requiredSession = requireSession(session);
+  const parsed = parseListingSubmissionPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid listing submission payload" };
+  }
+
+  const item = createIntakeSubmission({
+    type: "listing_submission",
+    submittedByUserId: requiredSession.userId,
+    marketId: parsed.marketId,
+    title: parsed.title,
+    description: parsed.details,
+    priority: parsed.state === "broker_verified" ? "high" : "medium",
+    payload: {
+      email: requiredSession.email,
+      listingReference: parsed.listingReference,
+      currencyCode: parsed.currencyCode,
+      amount: String(parsed.amount),
+      state: parsed.state,
+      sourceName: parsed.sourceName,
+      brokerName: parsed.brokerName,
+      parcelId: parsed.parcelId ?? "",
+      details: parsed.details
+    }
+  });
+
+  return { ok: true, item };
+};
+
+export const createIssueReport = (
+  body: unknown,
+  session?: AuthSession
+): { ok: true; item: IntakeSubmissionDto } | { ok: false; error: string } => {
+  const parsed = parseIssueReportPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid issue report payload" };
+  }
+
+  const item = createIntakeSubmission({
+    type: "issue_report",
+    submittedByUserId: session?.userId ?? null,
+    marketId: parsed.marketId,
+    title: parsed.title,
+    description: parsed.description,
+    priority: "high",
+    payload: {
+      email: parsed.email,
+      issueType: parsed.issueType,
+      listingReference: parsed.listingReference,
+      description: parsed.description
+    }
+  });
+
+  return { ok: true, item };
+};
+
+export const createPasswordResetRequest = (body: unknown): { ok: true } | { ok: false; error: string } => {
+  const parsed = parsePasswordResetPayload(body);
+  if (!parsed) {
+    return { ok: false, error: "Invalid reset request payload" };
+  }
+
+  createIntakeSubmission({
+    type: "password_reset",
+    submittedByUserId: null,
+    marketId: null,
+    title: `Password reset request - ${parsed.email}`,
+    description: "User requested a password reset link from the web app.",
+    priority: "low",
+    payload: {
+      email: parsed.email
+    }
+  });
+
+  // Intentional generic success message to avoid account enumeration.
+  return { ok: true };
+};
+
+export const listAdminIntakeSubmissions = (url: URL): CollectionResponse<IntakeSubmissionDto> => {
+  const statusFilter = parseMultiValue(url, "status");
+  const typeFilter = parseMultiValue(url, "type");
+  const marketId = (url.searchParams.get("marketId") ?? "").trim();
+
+  const filtered = listPersistedIntakeSubmissions().filter((item) => {
+    if (statusFilter.length > 0 && !statusFilter.includes(item.status)) {
+      return false;
+    }
+    if (typeFilter.length > 0 && !typeFilter.includes(item.type)) {
+      return false;
+    }
+    if (marketId && item.marketId !== marketId) {
+      return false;
+    }
+    return true;
+  });
+
+  const paged = applyPagination(filtered, url, 150, 500);
+  return okResponse(paged.data, paged.total, paged.pagination, {
+    status: statusFilter,
+    type: typeFilter,
+    ...(marketId ? { marketId } : {})
+  });
+};
+
+export const setAdminIntakeDecision = (
+  submissionId: string,
+  decision: "approved" | "rejected"
+): { ok: boolean; item: IntakeSubmissionDto | null } => setIntakeSubmissionDecision(submissionId, decision);

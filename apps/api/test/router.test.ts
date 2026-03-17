@@ -36,3 +36,13 @@ test("resolveRoute includes authenticated user workspace endpoints", () => {
   const compareRoute = resolveRoute(createRequest("GET", "/v1/compare?parcelId=p-dxb-001"));
   assert.equal(compareRoute?.definition.description.includes("Compare selected parcels"), true);
 });
+
+test("resolveRoute includes intake and moderation endpoints", () => {
+  const demoIntakeRoute = resolveRoute(createRequest("POST", "/v1/intake/demo-requests"));
+  assert.equal(demoIntakeRoute?.definition.description.includes("demo request intake"), true);
+
+  const intakeDecisionRoute = resolveRoute(createRequest("POST", "/v1/admin/intake/intake-123/approve"));
+  assert.equal(intakeDecisionRoute?.params.id, "intake-123");
+  assert.equal(intakeDecisionRoute?.params.decision, "approve");
+  assert.equal(intakeDecisionRoute?.definition.requiredRole, "operator");
+});

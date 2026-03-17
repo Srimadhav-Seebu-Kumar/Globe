@@ -209,6 +209,20 @@ export interface InquiryDto {
   createdAt: string;
 }
 
+export interface IntakeSubmissionDto {
+  id: string;
+  type: "demo_request" | "listing_submission" | "issue_report" | "password_reset";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  submittedByEmail: string;
+  submittedByUserId: string | null;
+  marketId: string | null;
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high";
+  payload: Record<string, string>;
+}
+
 export interface CollectionResponse<T> {
   data: T[];
   meta: {

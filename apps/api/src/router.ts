@@ -3,7 +3,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getClientKey, type AuthRole, type AuthSession } from "./auth.js";
 import {
   compareParcels,
+  createDemoRequest,
+  createIssueReport,
+  createListingSubmission,
   createInquiry,
+  createPasswordResetRequest,
   createSavedSearch,
   createWatchlistItem,
   currentUser,
@@ -11,6 +15,7 @@ import {
   health,
   listActivityEvents,
   listAlerts,
+  listAdminIntakeSubmissions,
   listBrokerProfiles,
   listInquiries,
   listListings,
@@ -23,6 +28,7 @@ import {
   listWatchlistItems,
   login,
   register,
+  setAdminIntakeDecision,
   setReviewDecision
 } from "./handlers.js";
 
@@ -164,6 +170,59 @@ export const routes: RouteDefinition[] = [
     }
   },
   {
+    method: "POST",
+    pattern: /^\/v1\/auth\/reset-request$/,
+    description: "Request password reset instructions",
+    handler: ({ body }) => createPasswordResetRequest(body),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 202 : 422;
+      }
+      return 500;
+    }
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/intake\/demo-requests$/,
+    description: "Create a product demo request intake",
+    handler: ({ body }) => createDemoRequest(body),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 422;
+      }
+      return 500;
+    }
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/intake\/listing-submissions$/,
+    description: "Create listing intake submission for moderation",
+    handler: ({ body, session }) => createListingSubmission(body, session),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 422;
+      }
+      return 500;
+    },
+    requiresAuth: true
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/intake\/issues$/,
+    description: "Create issue report intake submission",
+    handler: ({ body, session }) => createIssueReport(body, session),
+    statusResolver: (payload) => {
+      if (typeof payload === "object" && payload && "ok" in payload) {
+        const result = payload as { ok: boolean };
+        return result.ok ? 201 : 422;
+      }
+      return 500;
+    }
+  },
+  {
     method: "GET",
     pattern: /^\/v1\/me$/,
     description: "Get current authenticated user",
@@ -253,6 +312,35 @@ export const routes: RouteDefinition[] = [
     pattern: /^\/v1\/admin\/reviews$/,
     description: "Review queue",
     handler: ({ url }) => listReviewQueue(url),
+    requiresAuth: true,
+    requiredRole: "operator"
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/admin\/intake$/,
+    description: "Moderation queue for intake submissions",
+    handler: ({ url }) => listAdminIntakeSubmissions(url),
+    requiresAuth: true,
+    requiredRole: "operator"
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/admin\/intake\/(?<id>[^/]+)\/(?<decision>approve|reject)$/,
+    description: "Apply intake moderation decision",
+    handler: ({ params }) => {
+      if (!params.id || !params.decision) {
+        return { ok: false, item: null };
+      }
+      const decision = params.decision === "approve" ? "approved" : "rejected";
+      return setAdminIntakeDecision(params.id, decision);
+    },
+    statusResolver: (payload) => {
+      if (typeof payload !== "object" || !payload || !("ok" in payload)) {
+        return 200;
+      }
+      const result = payload as { ok: boolean };
+      return result.ok ? 200 : 404;
+    },
     requiresAuth: true,
     requiredRole: "operator"
   },

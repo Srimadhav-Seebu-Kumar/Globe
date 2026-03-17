@@ -26,6 +26,20 @@ interface ReviewItemDto {
   status: "pending" | "approved" | "rejected";
 }
 
+interface IntakeSubmissionDto {
+  id: string;
+  type: "demo_request" | "listing_submission" | "issue_report" | "password_reset";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  submittedByEmail: string;
+  submittedByUserId: string | null;
+  marketId: string | null;
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high";
+  payload: Record<string, string>;
+}
+
 interface LoginResponseDto {
   ok: boolean;
   token: string | null;
@@ -83,6 +97,7 @@ const statusColor = (status: SourceHealthDto["status"]): string => {
 export default function AdminPage() {
   const [sources, setSources] = useState<SourceHealthDto[]>([]);
   const [reviews, setReviews] = useState<ReviewItemDto[]>([]);
+  const [intakeSubmissions, setIntakeSubmissions] = useState<IntakeSubmissionDto[]>([]);
   const [statusFilter, setStatusFilter] = useState<"all" | SourceHealthDto["status"]>("all");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -96,6 +111,7 @@ export default function AdminPage() {
     setToken("");
     setSources([]);
     setReviews([]);
+    setIntakeSubmissions([]);
     globalThis.sessionStorage.removeItem(SESSION_STORAGE_KEY);
     globalThis.localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
@@ -114,13 +130,15 @@ export default function AdminPage() {
 
       try {
         const sourcePath = sourceStatus === "all" ? "/v1/admin/sources" : `/v1/admin/sources?status=${sourceStatus}`;
-        const [sourceRows, reviewRows] = await Promise.all([
+        const [sourceRows, reviewRows, intakeRows] = await Promise.all([
           fetchCollection<SourceHealthDto>(sourcePath, authToken),
-          fetchCollection<ReviewItemDto>("/v1/admin/reviews", authToken)
+          fetchCollection<ReviewItemDto>("/v1/admin/reviews", authToken),
+          fetchCollection<IntakeSubmissionDto>("/v1/admin/intake?status=pending&limit=250", authToken)
         ]);
 
         setSources(sourceRows);
         setReviews(reviewRows);
+        setIntakeSubmissions(intakeRows);
       } catch (requestError) {
         if (requestError instanceof UnauthorizedError) {
           clearSession();
@@ -140,6 +158,7 @@ export default function AdminPage() {
     if (!token) {
       setSources([]);
       setReviews([]);
+      setIntakeSubmissions([]);
       setIsLoading(false);
       return;
     }
@@ -148,6 +167,10 @@ export default function AdminPage() {
   }, [loadAdminData, statusFilter, token]);
 
   const pendingCount = useMemo(() => reviews.filter((review) => review.status === "pending").length, [reviews]);
+  const pendingIntakeCount = useMemo(
+    () => intakeSubmissions.filter((submission) => submission.status === "pending").length,
+    [intakeSubmissions]
+  );
 
   const applyDecision = async (reviewId: string, decision: "approve" | "reject") => {
     if (!token) {
@@ -179,6 +202,39 @@ export default function AdminPage() {
       }
 
       setError(requestError instanceof Error ? requestError.message : "Decision update failed");
+    }
+  };
+
+  const applyIntakeDecision = async (intakeId: string, decision: "approve" | "reject") => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/admin/intake/${intakeId}/${decision}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      });
+
+      if (response.status === 401) {
+        throw new UnauthorizedError();
+      }
+
+      if (!response.ok) {
+        throw new Error(`Intake decision update failed (${response.status})`);
+      }
+
+      await loadAdminData(statusFilter, token);
+    } catch (requestError) {
+      if (requestError instanceof UnauthorizedError) {
+        clearSession();
+        setError("Session expired. Sign in again.");
+        return;
+      }
+
+      setError(requestError instanceof Error ? requestError.message : "Intake decision update failed");
     }
   };
 
@@ -224,6 +280,7 @@ export default function AdminPage() {
         <div className="kpis">
           <span className="kpi">Sources monitored: {sources.length}</span>
           <span className="kpi">Review queue: {pendingCount}</span>
+          <span className="kpi">Intake queue: {pendingIntakeCount}</span>
           <span className="kpi">Healthy feeds: {sources.filter((source) => source.status === "healthy").length}</span>
         </div>
       </header>
@@ -374,6 +431,55 @@ export default function AdminPage() {
                 ))}
               </tbody>
             </table>
+          </article>
+
+          <article className="card" style={{ gridColumn: "1 / -1" }}>
+            <h3 style={{ marginTop: 0 }}>Workflow intake moderation</h3>
+            {!token ? (
+              <p style={{ color: "#9ca3af", fontSize: 13 }}>Sign in to moderate intake submissions.</p>
+            ) : intakeSubmissions.length === 0 ? (
+              <p style={{ color: "#9ca3af", fontSize: 13 }}>No pending intake submissions.</p>
+            ) : (
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Title</th>
+                    <th>Email</th>
+                    <th>Market</th>
+                    <th>Priority</th>
+                    <th>Submitted</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {intakeSubmissions.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.type}</td>
+                      <td>
+                        {item.title}
+                        <br />
+                        <small>{item.description}</small>
+                      </td>
+                      <td>{item.submittedByEmail}</td>
+                      <td>{item.marketId ?? "Global"}</td>
+                      <td>{item.priority}</td>
+                      <td>{new Date(item.submittedAt).toLocaleString()}</td>
+                      <td>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button className="action-btn" onClick={() => void applyIntakeDecision(item.id, "approve")}>
+                            Approve
+                          </button>
+                          <button className="action-btn danger" onClick={() => void applyIntakeDecision(item.id, "reject")}>
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </article>
         </div>
       </section>

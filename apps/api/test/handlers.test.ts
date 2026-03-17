@@ -1,7 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { health, listAlerts, listListings, listMarkets, listParcels, login, setReviewDecision } from "../src/handlers.js";
+import {
+  createDemoRequest,
+  createListingSubmission,
+  createPasswordResetRequest,
+  health,
+  listAdminIntakeSubmissions,
+  listAlerts,
+  listListings,
+  listMarkets,
+  listParcels,
+  login,
+  setReviewDecision
+} from "../src/handlers.js";
 
 const restoreEnv = (key: "APP_OPERATOR_EMAIL" | "APP_OPERATOR_PASSWORD", value: string | undefined): void => {
   if (typeof value === "undefined") {
@@ -106,4 +118,59 @@ test("login succeeds when credentials are configured", () => {
 
   restoreEnv("APP_OPERATOR_EMAIL", previousEmail);
   restoreEnv("APP_OPERATOR_PASSWORD", previousPassword);
+});
+
+test("intake flow persists demo requests and supports admin listing", () => {
+  const created = createDemoRequest({
+    fullName: "Maya Analyst",
+    email: "maya@example.com",
+    company: "Acme Capital",
+    marketFocus: "Dubai + London",
+    details: "Need parcel verification workflow demo."
+  });
+
+  assert.equal(created.ok, true);
+
+  const listResponse = listAdminIntakeSubmissions(new URL("http://localhost/v1/admin/intake?type=demo_request"));
+  assert.equal(listResponse.data.some((item) => item.type === "demo_request"), true);
+});
+
+test("listing intake requires valid session and valid payload", () => {
+  const now = Date.now();
+  const created = createListingSubmission(
+    {
+      marketId: "m-dubai",
+      title: "Palm parcel listing from broker feed",
+      listingReference: "INTAKE-1001",
+      currencyCode: "AED",
+      amount: 52300000,
+      state: "broker_verified",
+      sourceName: "Broker submission",
+      brokerName: "Harborline Estates",
+      parcelId: "p-dxb-003",
+      details: "New doc pack available."
+    },
+    {
+      userId: "u-test",
+      email: "analyst@example.com",
+      role: "user",
+      name: "Analyst",
+      createdAt: new Date(now).toISOString(),
+      expiresAt: now + 60_000
+    }
+  );
+
+  assert.equal(created.ok, true);
+  if (created.ok) {
+    assert.equal(created.item.type, "listing_submission");
+    assert.equal(created.item.status, "pending");
+  }
+});
+
+test("password reset intake returns generic success for valid emails", () => {
+  const ok = createPasswordResetRequest({ email: "reset@example.com" });
+  assert.equal(ok.ok, true);
+
+  const invalid = createPasswordResetRequest({ email: "invalid-email" });
+  assert.equal(invalid.ok, false);
 });

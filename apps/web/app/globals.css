@@ -264,6 +264,44 @@ main {
   gap: 6px;
 }
 
+.market-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.market-board-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.52);
+  color: #dbeafe;
+  text-align: left;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.market-board-item strong {
+  font-size: 12px;
+  color: #f8fafc;
+}
+
+.market-board-item span {
+  color: #93c5fd;
+}
+
+.market-board-item.active {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: rgba(14, 116, 144, 0.28);
+}
+
+.market-board-item:hover {
+  border-color: rgba(56, 189, 248, 0.6);
+}
+
 .scroll-panel {
   display: flex;
   flex-direction: column;
@@ -306,6 +344,24 @@ main {
   justify-content: space-between;
   font-size: 11px;
   color: #94a3b8;
+}
+
+.confidence-model {
+  margin-top: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.44);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #cbd5e1;
+}
+
+.confidence-model strong {
+  color: #e2e8f0;
+  font-size: 12px;
 }
 
 .loading-overlay {
@@ -386,6 +442,10 @@ main {
     flex-wrap: wrap;
     padding: 8px 12px;
     gap: 8px;
+  }
+
+  .market-board {
+    grid-template-columns: 1fr;
   }
 
   .loading-overlay {

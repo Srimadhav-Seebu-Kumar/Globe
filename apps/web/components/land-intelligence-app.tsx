@@ -174,6 +174,20 @@ interface AuthResponseDto {
   errorCode?: string;
 }
 
+interface IntakeSubmissionDto {
+  id: string;
+  type: "demo_request" | "listing_submission" | "issue_report" | "password_reset";
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  submittedByEmail: string;
+  submittedByUserId: string | null;
+  marketId: string | null;
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high";
+  payload: Record<string, string>;
+}
+
 interface CollectionResponse<T> {
   data: T[];
   meta: {
@@ -345,11 +359,28 @@ export const LandIntelligenceApp = () => {
 
   const [authToken, setAuthToken] = useState("");
   const [currentUser, setCurrentUser] = useState<UserDto | null>(null);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "reset">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authName, setAuthName] = useState("");
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+
+  const [intakeMode, setIntakeMode] = useState<"demo_request" | "listing_submission" | "issue_report">("demo_request");
+  const [intakeName, setIntakeName] = useState("");
+  const [intakeEmail, setIntakeEmail] = useState("");
+  const [intakeCompany, setIntakeCompany] = useState("");
+  const [intakeListingTitle, setIntakeListingTitle] = useState("");
+  const [intakeListingReference, setIntakeListingReference] = useState("");
+  const [intakeListingAmount, setIntakeListingAmount] = useState("");
+  const [intakeListingCurrency, setIntakeListingCurrency] = useState("USD");
+  const [intakeListingState, setIntakeListingState] = useState<PriceState>("ask");
+  const [intakeListingSource, setIntakeListingSource] = useState("");
+  const [intakeListingBroker, setIntakeListingBroker] = useState("");
+  const [intakeIssueTitle, setIntakeIssueTitle] = useState("");
+  const [intakeIssueType, setIntakeIssueType] = useState("data_quality");
+  const [intakeIssueReference, setIntakeIssueReference] = useState("");
+  const [intakeDetails, setIntakeDetails] = useState("");
+  const [intakeMessage, setIntakeMessage] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");
@@ -376,6 +407,24 @@ export const LandIntelligenceApp = () => {
   const selectedMarketBenchmarkPerSqft = useMemo(
     () => (selectedMarket ? selectedMarket.benchmarkPricePerSqm / SQM_TO_SQFT : null),
     [selectedMarket]
+  );
+
+  const selectedMarketBenchmarkUsdPerSqm = useMemo(
+    () => (selectedMarket ? toUsd(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency) : null),
+    [selectedMarket]
+  );
+
+  const selectedMarketBenchmarkUsdPerSqft = useMemo(
+    () => (selectedMarketBenchmarkUsdPerSqm !== null ? selectedMarketBenchmarkUsdPerSqm / SQM_TO_SQFT : null),
+    [selectedMarketBenchmarkUsdPerSqm]
+  );
+
+  const marketBoard = useMemo(
+    () =>
+      [...markets]
+        .sort((left, right) => right.activityScore - left.activityScore)
+        .slice(0, 8),
+    [markets]
   );
 
   const latestRefreshAt = useMemo(() => {
@@ -518,6 +567,15 @@ export const LandIntelligenceApp = () => {
       controller.abort();
     };
   }, [authToken, refreshTick]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+
+    setIntakeEmail((previous) => (previous.trim().length > 0 ? previous : currentUser.email));
+    setIntakeName((previous) => (previous.trim().length > 0 ? previous : currentUser.name));
+  }, [currentUser]);
 
   useEffect(() => {
     const params = new URLSearchParams(globalThis.location.search);
@@ -917,16 +975,39 @@ export const LandIntelligenceApp = () => {
   const authenticateUser = async () => {
     setAuthMessage(null);
     const email = authEmail.trim().toLowerCase();
-    if (!email || !authPassword) {
+    if (!email) {
+      setAuthMessage("Enter your email.");
+      return;
+    }
+
+    if (authMode === "reset") {
+      try {
+        const response = await fetch(`${API_BASE_URL}/v1/auth/reset-request`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+        const payload = (await response.json()) as { ok?: boolean };
+        if (!response.ok || !payload.ok) {
+          setAuthMessage("Could not submit reset request.");
+          return;
+        }
+        setAuthMessage("Reset request submitted. An operator will follow up.");
+        setAuthMode("login");
+      } catch (requestError) {
+        setAuthMessage(requestError instanceof Error ? requestError.message : "Authentication request failed");
+      }
+      return;
+    }
+
+    if (!authPassword) {
       setAuthMessage("Enter email and password.");
       return;
     }
 
     const endpoint = authMode === "register" ? "/v1/auth/register" : "/v1/auth/login";
-    const body =
-      authMode === "register"
-        ? { email, password: authPassword, name: authName.trim() || null }
-        : { email, password: authPassword };
+    const body = authMode === "register" ? { email, password: authPassword, name: authName.trim() || null } : { email, password: authPassword };
 
     try {
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -1172,6 +1253,134 @@ export const LandIntelligenceApp = () => {
     }
   };
 
+  const submitWorkflowIntake = async () => {
+    setIntakeMessage(null);
+
+    if (intakeMode === "demo_request") {
+      const email = intakeEmail.trim().toLowerCase();
+      if (!intakeName.trim() || !email.includes("@")) {
+        setIntakeMessage("Provide your name and a valid email.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/v1/intake/demo-requests`, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            fullName: intakeName.trim(),
+            email,
+            company: intakeCompany.trim(),
+            marketFocus: selectedMarket?.name ?? "Global",
+            details: intakeDetails.trim()
+          })
+        });
+        const payload = (await response.json()) as { ok?: boolean; item?: IntakeSubmissionDto; error?: string };
+        if (!response.ok || !payload.ok || !payload.item) {
+          setIntakeMessage(payload.error ?? "Demo request could not be submitted.");
+          return;
+        }
+        setIntakeDetails("");
+        setIntakeCompany("");
+        setIntakeMessage("Demo request submitted. Our team will respond through the in-app intake queue.");
+      } catch (requestError) {
+        setIntakeMessage(requestError instanceof Error ? requestError.message : "Demo request could not be submitted.");
+      }
+      return;
+    }
+
+    if (intakeMode === "listing_submission") {
+      if (!authToken || !currentUser) {
+        setIntakeMessage("Sign in to submit listing intake.");
+        return;
+      }
+      if (!selectedMarketId || !intakeListingTitle.trim() || !intakeListingReference.trim()) {
+        setIntakeMessage("Choose a market and include listing title/reference.");
+        return;
+      }
+
+      const amount = Number(intakeListingAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setIntakeMessage("Provide a valid listing amount.");
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/v1/intake/listing-submissions`, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            marketId: selectedMarketId,
+            title: intakeListingTitle.trim(),
+            listingReference: intakeListingReference.trim(),
+            currencyCode: intakeListingCurrency.trim().toUpperCase() || "USD",
+            amount,
+            state: intakeListingState,
+            sourceName: intakeListingSource.trim() || "User listing submission",
+            brokerName: intakeListingBroker.trim(),
+            parcelId: null,
+            details: intakeDetails.trim()
+          })
+        });
+        const payload = (await response.json()) as { ok?: boolean; item?: IntakeSubmissionDto; error?: string };
+        if (!response.ok || !payload.ok || !payload.item) {
+          setIntakeMessage(payload.error ?? "Listing submission failed.");
+          return;
+        }
+
+        setIntakeListingTitle("");
+        setIntakeListingReference("");
+        setIntakeListingAmount("");
+        setIntakeListingSource("");
+        setIntakeListingBroker("");
+        setIntakeDetails("");
+        setIntakeMessage("Listing submitted to moderation queue.");
+      } catch (requestError) {
+        setIntakeMessage(requestError instanceof Error ? requestError.message : "Listing submission failed.");
+      }
+      return;
+    }
+
+    const email = intakeEmail.trim().toLowerCase();
+    if (!email.includes("@") || !intakeIssueTitle.trim() || !intakeDetails.trim()) {
+      setIntakeMessage("Provide email, issue title, and issue details.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/v1/intake/issues`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email,
+          marketId: selectedMarketId || null,
+          title: intakeIssueTitle.trim(),
+          issueType: intakeIssueType,
+          listingReference: intakeIssueReference.trim(),
+          description: intakeDetails.trim()
+        })
+      });
+      const payload = (await response.json()) as { ok?: boolean; item?: IntakeSubmissionDto; error?: string };
+      if (!response.ok || !payload.ok || !payload.item) {
+        setIntakeMessage(payload.error ?? "Issue report submission failed.");
+        return;
+      }
+
+      setIntakeIssueTitle("");
+      setIntakeIssueReference("");
+      setIntakeDetails("");
+      setIntakeMessage("Issue reported. It is now in the moderation queue.");
+    } catch (requestError) {
+      setIntakeMessage(requestError instanceof Error ? requestError.message : "Issue report submission failed.");
+    }
+  };
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -1200,9 +1409,9 @@ export const LandIntelligenceApp = () => {
           {selectedMarket ? <span className="badge">Market confidence: {selectedMarket.confidence}</span> : null}
           <span className="badge">Legal: {legalDisplayOnly ? "Strict" : "Inclusive"}</span>
           {currentUser ? <span className="badge">User: {currentUser.name}</span> : <span className="badge">Guest</span>}
-          <a className="action-button" href="mailto:hello@globelandintelligence.com?subject=Globe%20Land%20Intelligence%20Demo%20Request">
+          <button type="button" className="action-button" onClick={() => setIntakeMode("demo_request")}>
             Request demo
-          </a>
+          </button>
           {currentUser ? (
             <button type="button" className="action-button" onClick={logoutUser}>
               Sign out
@@ -1308,12 +1517,236 @@ export const LandIntelligenceApp = () => {
           <button type="button" className="action-button" onClick={() => void saveMarketWatchlist()}>
             Save market
           </button>
-          <a className="action-button" href="mailto:listings@globelandintelligence.com?subject=Submit%20Land%20Listing">
+          <button type="button" className="action-button" onClick={() => setIntakeMode("listing_submission")}>
             Add listing
-          </a>
-          <a className="action-button" href="mailto:support@globelandintelligence.com?subject=Report%20Duplicate%20or%20Stale%20Listing">
+          </button>
+          <button type="button" className="action-button" onClick={() => setIntakeMode("issue_report")}>
             Report issue
-          </a>
+          </button>
+        </div>
+
+        <div className="control-group" style={{ marginTop: 10 }}>
+          <p className="muted-text" style={{ margin: 0 }}>
+            Native intake workflow
+          </p>
+          <div className="action-row" style={{ gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+            <button
+              type="button"
+              className="action-button"
+              onClick={() => setIntakeMode("demo_request")}
+              aria-pressed={intakeMode === "demo_request"}
+            >
+              Demo request
+            </button>
+            <button
+              type="button"
+              className="action-button"
+              onClick={() => setIntakeMode("listing_submission")}
+              aria-pressed={intakeMode === "listing_submission"}
+            >
+              Listing intake
+            </button>
+            <button
+              type="button"
+              className="action-button"
+              onClick={() => setIntakeMode("issue_report")}
+              aria-pressed={intakeMode === "issue_report"}
+            >
+              Issue report
+            </button>
+          </div>
+
+          {intakeMode === "demo_request" ? (
+            <>
+              <label className="field-label" htmlFor="intake-name">
+                Name
+              </label>
+              <input
+                id="intake-name"
+                className="field-input"
+                value={intakeName}
+                onChange={(event) => setIntakeName(event.target.value)}
+                placeholder="Your name"
+              />
+              <label className="field-label" htmlFor="intake-email">
+                Email
+              </label>
+              <input
+                id="intake-email"
+                className="field-input"
+                value={intakeEmail}
+                onChange={(event) => setIntakeEmail(event.target.value)}
+                placeholder="name@company.com"
+              />
+              <label className="field-label" htmlFor="intake-company">
+                Company
+              </label>
+              <input
+                id="intake-company"
+                className="field-input"
+                value={intakeCompany}
+                onChange={(event) => setIntakeCompany(event.target.value)}
+                placeholder="Fund / broker / developer"
+              />
+            </>
+          ) : null}
+
+          {intakeMode === "listing_submission" ? (
+            <>
+              <label className="field-label" htmlFor="intake-listing-title">
+                Listing title
+              </label>
+              <input
+                id="intake-listing-title"
+                className="field-input"
+                value={intakeListingTitle}
+                onChange={(event) => setIntakeListingTitle(event.target.value)}
+                placeholder="Waterfront parcel opportunity"
+              />
+              <label className="field-label" htmlFor="intake-listing-reference">
+                Listing reference
+              </label>
+              <input
+                id="intake-listing-reference"
+                className="field-input"
+                value={intakeListingReference}
+                onChange={(event) => setIntakeListingReference(event.target.value)}
+                placeholder="Source listing ID"
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label className="field-label" htmlFor="intake-listing-amount">
+                    Amount
+                  </label>
+                  <input
+                    id="intake-listing-amount"
+                    className="field-input"
+                    value={intakeListingAmount}
+                    onChange={(event) => setIntakeListingAmount(event.target.value)}
+                    placeholder="e.g. 52500000"
+                  />
+                </div>
+                <div>
+                  <label className="field-label" htmlFor="intake-listing-currency">
+                    Currency
+                  </label>
+                  <input
+                    id="intake-listing-currency"
+                    className="field-input"
+                    value={intakeListingCurrency}
+                    onChange={(event) => setIntakeListingCurrency(event.target.value)}
+                    placeholder="USD"
+                  />
+                </div>
+              </div>
+              <label className="field-label" htmlFor="intake-listing-state">
+                Pricing state
+              </label>
+              <select
+                id="intake-listing-state"
+                className="field-input"
+                value={intakeListingState}
+                onChange={(event) => setIntakeListingState(event.target.value as PriceState)}
+              >
+                {PRICE_STATES.map((state) => (
+                  <option key={state} value={state}>
+                    {priceStateLabel(state)}
+                  </option>
+                ))}
+              </select>
+              <label className="field-label" htmlFor="intake-listing-source">
+                Source
+              </label>
+              <input
+                id="intake-listing-source"
+                className="field-input"
+                value={intakeListingSource}
+                onChange={(event) => setIntakeListingSource(event.target.value)}
+                placeholder="Source feed or registry"
+              />
+              <label className="field-label" htmlFor="intake-listing-broker">
+                Broker (optional)
+              </label>
+              <input
+                id="intake-listing-broker"
+                className="field-input"
+                value={intakeListingBroker}
+                onChange={(event) => setIntakeListingBroker(event.target.value)}
+                placeholder="Broker / agency name"
+              />
+            </>
+          ) : null}
+
+          {intakeMode === "issue_report" ? (
+            <>
+              <label className="field-label" htmlFor="intake-email-issue">
+                Contact email
+              </label>
+              <input
+                id="intake-email-issue"
+                className="field-input"
+                value={intakeEmail}
+                onChange={(event) => setIntakeEmail(event.target.value)}
+                placeholder="name@company.com"
+              />
+              <label className="field-label" htmlFor="intake-issue-title">
+                Issue title
+              </label>
+              <input
+                id="intake-issue-title"
+                className="field-input"
+                value={intakeIssueTitle}
+                onChange={(event) => setIntakeIssueTitle(event.target.value)}
+                placeholder="Duplicate listing in Dubai South"
+              />
+              <label className="field-label" htmlFor="intake-issue-type">
+                Issue type
+              </label>
+              <select
+                id="intake-issue-type"
+                className="field-input"
+                value={intakeIssueType}
+                onChange={(event) => setIntakeIssueType(event.target.value)}
+              >
+                <option value="data_quality">data quality</option>
+                <option value="duplicate">duplicate</option>
+                <option value="stale">stale listing</option>
+                <option value="policy">policy concern</option>
+              </select>
+              <label className="field-label" htmlFor="intake-issue-reference">
+                Listing reference (optional)
+              </label>
+              <input
+                id="intake-issue-reference"
+                className="field-input"
+                value={intakeIssueReference}
+                onChange={(event) => setIntakeIssueReference(event.target.value)}
+                placeholder="DXB-ASK-1001"
+              />
+            </>
+          ) : null}
+
+          <label className="field-label" htmlFor="intake-details">
+            Details
+          </label>
+          <textarea
+            id="intake-details"
+            className="field-input"
+            rows={4}
+            value={intakeDetails}
+            onChange={(event) => setIntakeDetails(event.target.value)}
+            placeholder="Provide provenance, source links, and what should happen next."
+          />
+
+          <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="action-button" onClick={() => void submitWorkflowIntake()}>
+              Submit intake
+            </button>
+            <span className="muted-text" style={{ display: "inline-flex", alignItems: "center" }}>
+              Routed to moderation queue
+            </span>
+          </div>
+          {intakeMessage ? <p className="muted-text">{intakeMessage}</p> : null}
         </div>
         <p className="field-label" style={{ marginTop: 14 }}>
           Account
@@ -1330,6 +1763,9 @@ export const LandIntelligenceApp = () => {
           </div>
         ) : (
           <div className="control-group">
+            <p className="muted-text" style={{ margin: 0 }}>
+              Onboarding: 1) create account, 2) save search, 3) add watchlist + alerts.
+            </p>
             <label className="field-label" htmlFor="auth-email">
               Email
             </label>
@@ -1343,14 +1779,18 @@ export const LandIntelligenceApp = () => {
             <label className="field-label" htmlFor="auth-password">
               Password
             </label>
-            <input
-              id="auth-password"
-              className="field-input"
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder="Minimum 8 characters"
-            />
+            {authMode !== "reset" ? (
+              <input
+                id="auth-password"
+                className="field-input"
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="Minimum 8 characters"
+              />
+            ) : (
+              <p className="muted-text">Submit reset request to receive credential help through moderation support.</p>
+            )}
             {authMode === "register" ? (
               <>
                 <label className="field-label" htmlFor="auth-name">
@@ -1367,7 +1807,7 @@ export const LandIntelligenceApp = () => {
             ) : null}
             <div className="action-row" style={{ gap: 8, flexWrap: "wrap" }}>
               <button type="button" className="action-button" onClick={() => void authenticateUser()}>
-                {authMode === "register" ? "Create account" : "Sign in"}
+                {authMode === "register" ? "Create account" : authMode === "reset" ? "Request reset" : "Sign in"}
               </button>
               <button
                 type="button"
@@ -1375,6 +1815,9 @@ export const LandIntelligenceApp = () => {
                 onClick={() => setAuthMode((mode) => (mode === "login" ? "register" : "login"))}
               >
                 {authMode === "login" ? "Need account?" : "Have account?"}
+              </button>
+              <button type="button" className="action-button" onClick={() => setAuthMode("reset")}>
+                Forgot password
               </button>
             </div>
             {authMessage ? <p className="muted-text">{authMessage}</p> : null}
@@ -1401,6 +1844,36 @@ export const LandIntelligenceApp = () => {
       </section>
 
       <aside className="right">
+        <h2 className="section-title">Market board ({markets.length})</h2>
+        <div className="market-board">
+          {marketBoard.map((market) => {
+            const benchmarkUsdPerSqft = toUsd(market.benchmarkPricePerSqm, market.benchmarkCurrency) / SQM_TO_SQFT;
+            const benchmarkLocalPerSqft = market.benchmarkPricePerSqm / SQM_TO_SQFT;
+
+            return (
+              <button
+                key={market.id}
+                type="button"
+                className={`market-board-item${market.id === selectedMarketId ? " active" : ""}`}
+                onClick={() => setSelectedMarketId(market.id)}
+              >
+                <strong>{market.name}</strong>
+                <span>{market.region}</span>
+                <span>
+                  {coverageTierLabel(market.coverageTier)} | {market.confidence}
+                </span>
+                <span>
+                  Local {formatCurrencyPrecise(benchmarkLocalPerSqft, market.benchmarkCurrency)}/sqft
+                </span>
+                <span>USD-eq {formatCurrencyPrecise(benchmarkUsdPerSqft, "USD")}/sqft</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="muted-text" style={{ marginTop: 8 }}>
+          Discovery tip: market board stays global while detail drawer follows your selected market.
+        </p>
+
         {selectedMarket ? (
           <>
             <h2 className="section-title">{selectedMarket.name} detail</h2>
@@ -1427,10 +1900,20 @@ export const LandIntelligenceApp = () => {
               </div>
               <div className="stat-card">
                 <p>Benchmark</p>
-                <strong>{formatCurrency(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency)} /sqm</strong>
+                <strong>Local {formatCurrency(selectedMarket.benchmarkPricePerSqm, selectedMarket.benchmarkCurrency)} /sqm</strong>
                 <p style={{ marginTop: 4 }}>
                   {selectedMarketBenchmarkPerSqft !== null
-                    ? `${formatCurrencyPrecise(selectedMarketBenchmarkPerSqft, selectedMarket.benchmarkCurrency)} /sqft`
+                    ? `Local ${formatCurrencyPrecise(selectedMarketBenchmarkPerSqft, selectedMarket.benchmarkCurrency)} /sqft`
+                    : "n/a"}
+                </p>
+                <p style={{ marginTop: 4 }}>
+                  {selectedMarketBenchmarkUsdPerSqm !== null
+                    ? `USD-eq ${formatCurrencyPrecise(selectedMarketBenchmarkUsdPerSqm, "USD")} /sqm`
+                    : "n/a"}
+                </p>
+                <p style={{ marginTop: 4 }}>
+                  {selectedMarketBenchmarkUsdPerSqft !== null
+                    ? `USD-eq ${formatCurrencyPrecise(selectedMarketBenchmarkUsdPerSqft, "USD")} /sqft`
                     : "n/a"}
                 </p>
               </div>
@@ -1619,14 +2102,32 @@ export const LandIntelligenceApp = () => {
           <span>Higher blended USD-eq /sqft</span>
         </div>
         <p className="muted-text" style={{ margin: "8px 0 0" }}>
-          Rate model: market benchmarks are normalized to USD-equivalent per square foot for cross-market comparability, then rendered as
-          a 3D adaptive land-only grid. Zooming in increases tile density and shrinks tile area; zooming out coarsens cells for
-          performance.
+          Unit policy: map color and lift are always normalized to <strong>USD-equivalent /sqft</strong> for cross-market comparability.
+          Market cards show both local currency and USD-equivalent values so local deal context and global comparison stay aligned.
+        </p>
+        <p className="muted-text" style={{ margin: "6px 0 0" }}>
+          Rate model: listing observations are weighted by state, freshness, and confidence, then blended with benchmark fallback before
+          being rendered on the adaptive land grid.
         </p>
         <p className="muted-text" style={{ margin: "6px 0 0" }}>
           Quick read: 1) pick a market, 2) hover/tap a land tile, 3) review nearest city plus blended rate, 4) validate provenance and
           policy before decisions.
         </p>
+        <div className="confidence-model">
+          <strong>Confidence model</strong>
+          <span>
+            <b>verified</b>: direct verified source + freshest observation
+          </span>
+          <span>
+            <b>high</b>: primary sources with small interpolation
+          </span>
+          <span>
+            <b>medium</b>: mixed sources and larger interpolation radius
+          </span>
+          <span>
+            <b>low</b>: sparse coverage, fallback-heavy estimate
+          </span>
+        </div>
         <p className="muted-text" style={{ margin: "6px 0 0" }}>
           <Link href="/methodology">Methodology</Link> | <Link href="/data-sources">Data sources</Link> |{" "}
           <Link href="/legal-display">Legal display policy</Link>
