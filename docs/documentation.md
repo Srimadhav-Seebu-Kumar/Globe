@@ -185,6 +185,8 @@
 - 2026-03-17 18:16 GST: Tuned hover extrusion behavior in `apps/web/components/globe-canvas.tsx` to prevent overgrowth at high zoom and improve responsiveness: switched from fixed per-tier heights to per-cell rate-proportional heights, expanded cursor influence radius by ~300% (`4x` spread multiplier), and added a viewport-based hard cap so hover pillars do not exceed ~20% of screen height.
 - 2026-03-17 18:16 GST: Updated hover pillar color mapping to derive from per-cell `colorScore` (green -> yellow -> orange -> red), aligning raised pillar color with land-rate intensity of surrounding cells.
 - 2026-03-17 18:16 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after dynamic hover-height/color + viewport-cap changes.
+- 2026-03-17 18:21 GST: Built/pushed `globe-web` tags `839aeca` and `latest` to ECR, then redeployed EC2 web container via SSM (`3f7c3576-3d91-4b7d-9fb9-43881f0b721f`) to image `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:839aeca`; host probe remained healthy (`http://54.91.200.14:3000/` -> `200`).
+- 2026-03-17 18:21 GST: Playwright production smoke check completed on `http://54.91.200.14:3000` with no browser console errors after hover-cap/rate-lift deployment.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
