@@ -169,6 +169,8 @@
 - 2026-03-17 16:08 GST: Hosted availability checks passed after rollout (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`).
 - 2026-03-17 16:26 GST: Restored spherical globe rendering by switching `apps/web/components/globe-canvas.tsx` style projection from `mercator` to `globe` and adding a runtime `setProjection({ type: "globe" })` safeguard on map load.
 - 2026-03-17 16:26 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after globe projection restoration.
+- 2026-03-17 16:33 GST: Built/pushed `globe-web` tags `7e56ec4` and `latest`, then rolled EC2 web container via SSM (`d4767b08-8535-49dd-97e0-0cb0a9b25522`) to image `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7e56ec4`.
+- 2026-03-17 16:33 GST: Hosted probes after rollout remained healthy (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`) and Playwright screenshot verification confirmed spherical globe geometry in viewport (`live-globe-restored.png`).
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
