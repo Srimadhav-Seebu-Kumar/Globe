@@ -157,6 +157,48 @@ export const parcels: ParcelDto[] = [
     updatedAt: daysAgo(2)
   },
   {
+    id: "p-dxb-003",
+    canonicalParcelId: "AE-DXB-PALM-332",
+    marketId: "m-dubai",
+    title: "Palm Jumeirah waterfront land parcel",
+    center: { lng: 55.1352, lat: 25.1063 },
+    areaSqm: 8900,
+    zoningCode: "HOSP-2",
+    coverageTier: "tier_c_parcel_depth",
+    legalDisplayAllowed: true,
+    freshness: "daily",
+    confidence: "verified",
+    updatedAt: daysAgo(1)
+  },
+  {
+    id: "p-dxb-004",
+    canonicalParcelId: "AE-DXB-QUOZ-084",
+    marketId: "m-dubai",
+    title: "Al Quoz mixed industrial redevelopment site",
+    center: { lng: 55.2523, lat: 25.1293 },
+    areaSqm: 15700,
+    zoningCode: "I-MU",
+    coverageTier: "tier_c_parcel_depth",
+    legalDisplayAllowed: true,
+    freshness: "daily",
+    confidence: "high",
+    updatedAt: daysAgo(3)
+  },
+  {
+    id: "p-dxb-005",
+    canonicalParcelId: "AE-DXB-ISL-411",
+    marketId: "m-dubai",
+    title: "Dubai Islands hospitality-ready parcel",
+    center: { lng: 55.2904, lat: 25.3401 },
+    areaSqm: 10250,
+    zoningCode: "H-RES",
+    coverageTier: "tier_c_parcel_depth",
+    legalDisplayAllowed: true,
+    freshness: "daily",
+    confidence: "verified",
+    updatedAt: daysAgo(1)
+  },
+  {
     id: "p-ldn-001",
     canonicalParcelId: "GB-LON-E14-42",
     marketId: "m-london",
@@ -258,6 +300,90 @@ export const listings: ListingDto[] = [
     confidence: "medium"
   },
   {
+    id: "l-1005",
+    reference: "DXB-ASK-1005",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-003",
+    state: "ask",
+    amount: 69300000,
+    currencyCode: "AED",
+    observedAt: daysAgo(1),
+    sourceName: "Premium Coastal Brokers",
+    brokerName: "Harborline Estates",
+    freshness: "daily",
+    confidence: "verified"
+  },
+  {
+    id: "l-1006",
+    reference: "DXB-CL-1006",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-003",
+    state: "closed",
+    amount: 67150000,
+    currencyCode: "AED",
+    observedAt: daysAgo(18),
+    sourceName: "Transaction Registry",
+    brokerName: null,
+    freshness: "weekly",
+    confidence: "high"
+  },
+  {
+    id: "l-1007",
+    reference: "DXB-BV-1007",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-004",
+    state: "broker_verified",
+    amount: 28500000,
+    currencyCode: "AED",
+    observedAt: daysAgo(2),
+    sourceName: "Industrial Land Exchange",
+    brokerName: "Axis Land Commercial",
+    freshness: "daily",
+    confidence: "high"
+  },
+  {
+    id: "l-1008",
+    reference: "DXB-EST-1008",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-004",
+    state: "estimate",
+    amount: 27600000,
+    currencyCode: "AED",
+    observedAt: daysAgo(1),
+    sourceName: "Valuation Engine",
+    brokerName: null,
+    freshness: "daily",
+    confidence: "medium"
+  },
+  {
+    id: "l-1009",
+    reference: "DXB-ASK-1009",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-005",
+    state: "ask",
+    amount: 52800000,
+    currencyCode: "AED",
+    observedAt: daysAgo(0),
+    sourceName: "Dubai Land Department",
+    brokerName: "Northern Crescent Realty",
+    freshness: "realtime",
+    confidence: "verified"
+  },
+  {
+    id: "l-1010",
+    reference: "DXB-BV-1010",
+    marketId: "m-dubai",
+    parcelId: "p-dxb-005",
+    state: "broker_verified",
+    amount: 51750000,
+    currencyCode: "AED",
+    observedAt: daysAgo(1),
+    sourceName: "Broker Feed",
+    brokerName: "Northern Crescent Realty",
+    freshness: "daily",
+    confidence: "verified"
+  },
+  {
     id: "l-2001",
     reference: "LDN-ASK-2001",
     marketId: "m-london",
@@ -353,6 +479,22 @@ export const alerts: AlertDto[] = [
     lastTriggeredAt: daysAgo(1)
   },
   {
+    id: "a-004",
+    marketId: "m-dubai",
+    title: "New verified waterfront parcel listed on Palm Jumeirah",
+    ruleType: "new_listing",
+    isActive: true,
+    lastTriggeredAt: daysAgo(0)
+  },
+  {
+    id: "a-005",
+    marketId: "m-dubai",
+    title: "Al Quoz redevelopment listing changed broker-verified terms",
+    ruleType: "price_change",
+    isActive: true,
+    lastTriggeredAt: daysAgo(2)
+  },
+  {
     id: "a-002",
     marketId: "m-singapore",
     title: "New verified listing in Jurong innovation district",
@@ -371,6 +513,27 @@ export const alerts: AlertDto[] = [
 ];
 
 export const activityEvents: ActivityEventDto[] = [
+  {
+    id: "e-005",
+    marketId: "m-dubai",
+    summary: "Palm Jumeirah waterfront parcel moved to verified state",
+    occurredAt: daysAgo(0),
+    category: "verification"
+  },
+  {
+    id: "e-006",
+    marketId: "m-dubai",
+    summary: "Al Quoz redevelopment site received updated broker terms",
+    occurredAt: daysAgo(2),
+    category: "listing"
+  },
+  {
+    id: "e-007",
+    marketId: "m-dubai",
+    summary: "Dubai Islands hospitality parcel added to active watchlists",
+    occurredAt: daysAgo(1),
+    category: "listing"
+  },
   {
     id: "e-001",
     marketId: "m-singapore",

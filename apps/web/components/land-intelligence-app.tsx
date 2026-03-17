@@ -142,6 +142,12 @@ const priceStateLabel = (state: PriceState): string => state.replaceAll("_", " "
 const coverageTierLabel = (value: CoverageTier): string =>
   value.replace("tier_a_", "Tier A ").replace("tier_b_", "Tier B ").replace("tier_c_", "Tier C ").replaceAll("_", " ");
 
+const parseEnumList = <T extends string>(params: URLSearchParams, key: string, allowed: readonly T[]): T[] => {
+  const raw = params.getAll(key).flatMap((value) => value.split(","));
+  const picked = raw.map((value) => value.trim()).filter((value): value is T => allowed.includes(value as T));
+  return Array.from(new Set(picked));
+};
+
 const useDebouncedValue = <T,>(value: T, delayMs: number): T => {
   const [debounced, setDebounced] = useState(value);
 
@@ -188,6 +194,7 @@ export const LandIntelligenceApp = () => {
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [isHydratedFromUrl, setIsHydratedFromUrl] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 300);
   const debouncedWindowDays = useDebouncedValue(windowDays, 250);
 
@@ -259,9 +266,48 @@ export const LandIntelligenceApp = () => {
     setMinConfidence("low");
     setWindowDays(90);
     setLegalDisplayOnly(true);
+    setActionNote(null);
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(globalThis.location.search);
+    const initialQuery = params.get("q") ?? "";
+    const initialCoverage = parseEnumList(params, "coverageTier", COVERAGE_TIERS);
+    const initialStates = parseEnumList(params, "state", PRICE_STATES);
+    const initialConfidence = params.get("minConfidence");
+    const initialWindowDays = Number(params.get("windowDays") ?? Number.NaN);
+    const initialLegal = params.get("legalDisplayOnly");
+    const initialMarketId = params.get("marketId") ?? "";
+
+    setQuery(initialQuery);
+    if (initialCoverage.length > 0) {
+      setCoverageFilter(initialCoverage);
+    }
+    if (initialStates.length > 0) {
+      setStateFilter(initialStates);
+    }
+    if (initialConfidence && CONFIDENCE_LABELS.includes(initialConfidence as (typeof CONFIDENCE_LABELS)[number])) {
+      setMinConfidence(initialConfidence as (typeof CONFIDENCE_LABELS)[number]);
+    }
+    if (Number.isFinite(initialWindowDays)) {
+      setWindowDays(Math.max(7, Math.min(365, Math.round(initialWindowDays))));
+    }
+    if (initialLegal === "false") {
+      setLegalDisplayOnly(false);
+    } else if (initialLegal === "true") {
+      setLegalDisplayOnly(true);
+    }
+    if (initialMarketId) {
+      setSelectedMarketId(initialMarketId);
+    }
+    setIsHydratedFromUrl(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isHydratedFromUrl) {
+      return;
+    }
+
     const controller = new AbortController();
 
     const loadMarkets = async () => {
@@ -314,9 +360,13 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, debouncedQuery, debouncedWindowDays, minConfidence, refreshTick, stateFilter]);
+  }, [coverageFilter, debouncedQuery, debouncedWindowDays, isHydratedFromUrl, minConfidence, refreshTick, stateFilter]);
 
   useEffect(() => {
+    if (!isHydratedFromUrl) {
+      return;
+    }
+
     if (!selectedMarketId) {
       setParcels([]);
       setListings([]);
@@ -374,7 +424,40 @@ export const LandIntelligenceApp = () => {
     return () => {
       controller.abort();
     };
-  }, [coverageFilter, debouncedWindowDays, legalDisplayOnly, refreshTick, selectedMarketId, stateFilter]);
+  }, [coverageFilter, debouncedWindowDays, isHydratedFromUrl, legalDisplayOnly, refreshTick, selectedMarketId, stateFilter]);
+
+  useEffect(() => {
+    if (!isHydratedFromUrl) {
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (query.trim()) {
+      params.set("q", query.trim());
+    }
+    for (const tier of coverageFilter) {
+      params.append("coverageTier", tier);
+    }
+    for (const state of stateFilter) {
+      params.append("state", state);
+    }
+    params.set("minConfidence", minConfidence);
+    params.set("windowDays", String(windowDays));
+    params.set("legalDisplayOnly", String(legalDisplayOnly));
+    if (selectedMarketId) {
+      params.set("marketId", selectedMarketId);
+    }
+
+    const nextQuery = params.toString();
+    const currentPath = globalThis.location.pathname;
+    const current = globalThis.location.search.startsWith("?") ? globalThis.location.search.slice(1) : globalThis.location.search;
+    if (current === nextQuery) {
+      return;
+    }
+
+    const nextUrl = nextQuery ? `${currentPath}?${nextQuery}` : currentPath;
+    globalThis.history.replaceState({}, "", nextUrl);
+  }, [coverageFilter, isHydratedFromUrl, legalDisplayOnly, minConfidence, query, selectedMarketId, stateFilter, windowDays]);
 
   const toggleCoverageTier = (tier: CoverageTier) => {
     setCoverageFilter((previous) => {

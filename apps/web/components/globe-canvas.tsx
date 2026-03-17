@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { type GeoJSONSource, type MapLayerMouseEvent, type MapMouseEvent, type StyleSpecification } from "maplibre-gl";
+import maplibregl, {
+  type GeoJSONSource,
+  type MapLayerMouseEvent,
+  type MapMouseEvent,
+  type MapTouchEvent,
+  type StyleSpecification
+} from "maplibre-gl";
 import type { CoverageTier } from "@globe/types";
 
 interface MarketMapItem {
@@ -1892,7 +1898,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         }
       };
 
-      const handleMapHover = (event: MapMouseEvent) => {
+      const enqueueHoverPointer = (event: MapMouseEvent | MapTouchEvent) => {
         if (!event.lngLat) {
           return;
         }
@@ -1908,7 +1914,18 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         hoverFrameRef.current = globalThis.requestAnimationFrame(processHoverFrame);
       };
 
+      const handleMapHover = (event: MapMouseEvent) => {
+        enqueueHoverPointer(event);
+      };
+
+      const handleMapTap = (event: MapMouseEvent | MapTouchEvent) => {
+        enqueueHoverPointer(event);
+      };
+
       map.on("mousemove", handleMapHover);
+      map.on("touchmove", handleMapTap);
+      map.on("touchstart", handleMapTap);
+      map.on("click", handleMapTap);
 
       map.on("mouseenter", "market-hit-area", () => {
         map.getCanvas().style.cursor = "pointer";
