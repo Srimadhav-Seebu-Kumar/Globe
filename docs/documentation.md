@@ -176,6 +176,8 @@
 - 2026-03-17 17:02 GST: Refined hover-lift responsiveness in `apps/web/components/globe-canvas.tsx` by switching hover signature tracking to near-pixel pointer movement, adding zoom-aware pointer/influence radii (smaller at high zoom for immediate local response), reducing extrusion transition duration (`36ms`), and passing pointer coordinates through the hover target to prevent rigid/quantized updates.
 - 2026-03-17 17:02 GST: Improved land-cell hit reliability by replacing center-point-only land checks with multi-sample per-cell land detection, reducing false `No land grid cell` gaps where the cell center is off-land but the tile intersects land.
 - 2026-03-17 17:02 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after the hover/land reliability refinements.
+- 2026-03-17 17:15 GST: Built/pushed `globe-web` tags `ea74050` and `latest` to ECR (`513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web`), then redeployed EC2 web container via SSM (`4fc001d8-8229-4565-8384-ff616089322c`) to image `.../globe-web:ea74050`; post-rollout root probe returned `HTTP 200`.
+- 2026-03-17 17:15 GST: Playwright live interaction probe on `http://54.91.200.14:3000` (Texas market) showed high-frequency hover updates across consecutive cursor moves (`16` unique popup payloads from `18` samples, `14` land hits), confirming the hover-response reliability fix in production.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
