@@ -309,6 +309,7 @@ const fetchResource = async <T,>(
 
 export const LandIntelligenceApp = () => {
   const [markets, setMarkets] = useState<MarketDto[]>([]);
+  const [mapMarkets, setMapMarkets] = useState<MarketDto[]>([]);
   const [parcels, setParcels] = useState<ParcelDto[]>([]);
   const [listings, setListings] = useState<ListingDto[]>([]);
   const [alerts, setAlerts] = useState<AlertDto[]>([]);
@@ -589,6 +590,36 @@ export const LandIntelligenceApp = () => {
       controller.abort();
     };
   }, [coverageFilter, debouncedQuery, debouncedWindowDays, isHydratedFromUrl, minConfidence, refreshTick, stateFilter]);
+
+  useEffect(() => {
+    if (!isHydratedFromUrl) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadMapMarkets = async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set("minConfidence", "low");
+        params.set("windowDays", String(debouncedWindowDays));
+        params.set("limit", "500");
+        const rows = await fetchCollection<MarketDto>(`/v1/markets?${params.toString()}`, { signal: controller.signal });
+        setMapMarkets(rows);
+      } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setError(requestError instanceof Error ? requestError.message : "Failed to load map markets");
+      }
+    };
+
+    void loadMapMarkets();
+
+    return () => {
+      controller.abort();
+    };
+  }, [debouncedWindowDays, isHydratedFromUrl, refreshTick]);
 
   useEffect(() => {
     if (!isHydratedFromUrl) {
@@ -1223,7 +1254,11 @@ export const LandIntelligenceApp = () => {
       </aside>
 
       <section className="map">
-        <GlobeCanvas markets={markets} selectedMarketId={selectedMarketId} onSelectMarket={setSelectedMarketId} />
+        <GlobeCanvas
+          markets={mapMarkets.length > 0 ? mapMarkets : markets}
+          selectedMarketId={selectedMarketId}
+          onSelectMarket={setSelectedMarketId}
+        />
       </section>
 
       <aside className="right">

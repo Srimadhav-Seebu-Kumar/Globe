@@ -46,10 +46,14 @@ interface MajorCity {
 }
 
 interface MarketPoint {
+  id: string;
+  name: string;
   lng: number;
   lat: number;
   pricePerSqftUsd: number;
 }
+
+type RateConfidenceBand = "local" | "regional" | "inferred";
 
 interface GridViewportHint {
   centerLng: number;
@@ -67,6 +71,9 @@ interface GridCellMeta {
   contributorCount: number;
   stepDegrees: number;
   approxCellAreaSqft: number;
+  nearestDistanceKm: number;
+  nearestMarketName: string;
+  rateConfidence: RateConfidenceBand;
 }
 
 interface HoverLiftTarget {
@@ -151,6 +158,9 @@ const LAND_INDEX_BUCKET_DEGREES = 1;
 const LAND_INDEX_LNG_BUCKET_COUNT = Math.ceil(360 / LAND_INDEX_BUCKET_DEGREES);
 const LAND_INDEX_LAT_BUCKET_COUNT = Math.ceil(180 / LAND_INDEX_BUCKET_DEGREES);
 const GRID_UPDATE_MIN_INTERVAL_MS = 90;
+const INTERPOLATION_NEIGHBOR_COUNT = 4;
+const INTERPOLATION_DISTANCE_OFFSET_KM = 24;
+const INTERPOLATION_DISTANCE_POWER = 1.35;
 const sqftNumberFormatter = new Intl.NumberFormat("en-US");
 const FX_TO_USD: Record<string, number> = {
   USD: 1,
@@ -885,7 +895,15 @@ const extractGridCellsFromCollection = (collection: GeoJSON.FeatureCollection<Ge
         avgPricePerSqft: Number(properties?.avgPricePerSqft ?? 0),
         contributorCount: Number(properties?.contributorCount ?? 0),
         stepDegrees: Number(properties?.stepDegrees ?? 0),
-        approxCellAreaSqft: Number(properties?.approxCellAreaSqft ?? 0)
+        approxCellAreaSqft: Number(properties?.approxCellAreaSqft ?? 0),
+        nearestDistanceKm: Number(properties?.nearestDistanceKm ?? 0),
+        nearestMarketName: String(properties?.nearestMarketName ?? ""),
+        rateConfidence:
+          properties?.rateConfidence === "local" ||
+          properties?.rateConfidence === "regional" ||
+          properties?.rateConfidence === "inferred"
+            ? properties.rateConfidence
+            : "inferred"
       };
     })
     .filter((cell): cell is GridCellMeta => Boolean(cell));
@@ -894,39 +912,107 @@ const computeWeightedRate = (
   lng: number,
   lat: number,
   markets: MarketPoint[],
-  globalAverage: number,
   blendRadiusKm: number
-): { avgPricePerSqft: number; contributorCount: number } => {
+): {
+  avgPricePerSqft: number;
+  contributorCount: number;
+  nearestDistanceKm: number;
+  nearestMarketName: string;
+  rateConfidence: RateConfidenceBand;
+} => {
   if (markets.length === 0) {
-    return { avgPricePerSqft: 0, contributorCount: 0 };
+    return {
+      avgPricePerSqft: 0,
+      contributorCount: 0,
+      nearestDistanceKm: Number.POSITIVE_INFINITY,
+      nearestMarketName: "",
+      rateConfidence: "inferred"
+    };
   }
 
-  let weightedValueSum = 0;
-  let weightSum = 0;
-  let contributorCount = 0;
+  const candidates = markets
+    .map((market) => {
+      const distanceKm = haversineKm(lng, lat, market.lng, market.lat);
+      const localWeight = Math.exp(-(distanceKm * distanceKm) / (2 * blendRadiusKm * blendRadiusKm));
+      return {
+        market,
+        distanceKm,
+        localWeight
+      };
+    })
+    .filter((candidate) => Number.isFinite(candidate.distanceKm))
+    .sort((left, right) => left.distanceKm - right.distanceKm);
 
-  for (const market of markets) {
-    const distanceKm = haversineKm(lng, lat, market.lng, market.lat);
-    const weight = Math.exp(-(distanceKm * distanceKm) / (2 * blendRadiusKm * blendRadiusKm));
-    if (weight < 0.0015) {
+  const nearest = candidates[0];
+  if (!nearest) {
+    return {
+      avgPricePerSqft: 0,
+      contributorCount: 0,
+      nearestDistanceKm: Number.POSITIVE_INFINITY,
+      nearestMarketName: "",
+      rateConfidence: "inferred"
+    };
+  }
+
+  let localWeightedValueSum = 0;
+  let localWeightSum = 0;
+  let localContributorCount = 0;
+  for (const candidate of candidates) {
+    if (candidate.localWeight < 0.0015) {
       continue;
     }
-
-    weightedValueSum += market.pricePerSqftUsd * weight;
-    weightSum += weight;
-
-    if (weight > 0.1) {
-      contributorCount += 1;
+    localWeightedValueSum += candidate.market.pricePerSqftUsd * candidate.localWeight;
+    localWeightSum += candidate.localWeight;
+    if (candidate.localWeight > 0.1) {
+      localContributorCount += 1;
     }
   }
 
-  if (weightSum <= 0) {
-    return { avgPricePerSqft: Number(globalAverage.toFixed(2)), contributorCount: 0 };
+  if (localWeightSum > 0.0001) {
+    const nearestDistanceKm = nearest.distanceKm;
+    const rateConfidence =
+      nearestDistanceKm <= blendRadiusKm * 0.65
+        ? "local"
+        : nearestDistanceKm <= blendRadiusKm * 1.8
+          ? "regional"
+          : "inferred";
+    return {
+      avgPricePerSqft: Number((localWeightedValueSum / localWeightSum).toFixed(2)),
+      contributorCount: Math.max(localContributorCount, 1),
+      nearestDistanceKm: Number(nearestDistanceKm.toFixed(1)),
+      nearestMarketName: nearest.market.name,
+      rateConfidence
+    };
+  }
+
+  const nearestCandidates = candidates.slice(0, Math.max(1, Math.min(INTERPOLATION_NEIGHBOR_COUNT, candidates.length)));
+  let idwValueSum = 0;
+  let idwWeightSum = 0;
+  for (const candidate of nearestCandidates) {
+    const weight = 1 / Math.pow(candidate.distanceKm + INTERPOLATION_DISTANCE_OFFSET_KM, INTERPOLATION_DISTANCE_POWER);
+    if (!Number.isFinite(weight) || weight <= 0) {
+      continue;
+    }
+    idwValueSum += candidate.market.pricePerSqftUsd * weight;
+    idwWeightSum += weight;
+  }
+
+  if (idwWeightSum <= 0) {
+    return {
+      avgPricePerSqft: Number(nearest.market.pricePerSqftUsd.toFixed(2)),
+      contributorCount: 1,
+      nearestDistanceKm: Number(nearest.distanceKm.toFixed(1)),
+      nearestMarketName: nearest.market.name,
+      rateConfidence: nearest.distanceKm <= 450 ? "regional" : "inferred"
+    };
   }
 
   return {
-    avgPricePerSqft: Number((weightedValueSum / weightSum).toFixed(2)),
-    contributorCount: Math.max(contributorCount, 1)
+    avgPricePerSqft: Number((idwValueSum / idwWeightSum).toFixed(2)),
+    contributorCount: nearestCandidates.length,
+    nearestDistanceKm: Number(nearest.distanceKm.toFixed(1)),
+    nearestMarketName: nearest.market.name,
+    rateConfidence: nearest.distanceKm <= 450 ? "regional" : "inferred"
   };
 };
 
@@ -962,6 +1048,8 @@ const createAdaptiveGridFeatureCollection = (
   const markets = marketRows
     .filter((market) => market.benchmarkPricePerSqm > 0)
     .map<MarketPoint>((market) => ({
+      id: market.id,
+      name: market.name,
       lng: market.center.lng,
       lat: market.center.lat,
       pricePerSqftUsd: toUsd(market.benchmarkPricePerSqm, market.benchmarkCurrency) / SQM_TO_SQFT
@@ -969,9 +1057,6 @@ const createAdaptiveGridFeatureCollection = (
   const marketPrices = markets.map((market) => market.pricePerSqftUsd);
   const marketMinPrice = marketPrices.length > 0 ? Math.min(...marketPrices) : 0;
   const marketMaxPrice = marketPrices.length > 0 ? Math.max(...marketPrices) : marketMinPrice;
-  const globalAverage =
-    markets.length > 0 ? markets.reduce((sum, market) => sum + market.pricePerSqftUsd, 0) / markets.length : 0;
-
   let stepDegrees = getGridStepDegrees(zoom);
   const latSpan = north - south;
   let lngSpan = 0;
@@ -1019,7 +1104,7 @@ const createAdaptiveGridFeatureCollection = (
 
         const gridId = `${currentLngStart.toFixed(5)}:${currentLatStart.toFixed(5)}:${stepDegrees.toFixed(5)}`;
         const featureId = features.length + 1;
-        const stats = computeWeightedRate(centerLng, centerLat, markets, globalAverage, blendRadiusKm);
+        const stats = computeWeightedRate(centerLng, centerLat, markets, blendRadiusKm);
         const cellAreaSqft = approximateCellAreaSqft(centerLat, stepDegrees);
         const baseHeightMeters = computeBaseHeightMeters(stats.avgPricePerSqft, stats.contributorCount);
 
@@ -1046,7 +1131,10 @@ const createAdaptiveGridFeatureCollection = (
             contributorCount: stats.contributorCount,
             baseHeightMeters,
             stepDegrees: Number(stepDegrees.toFixed(6)),
-            approxCellAreaSqft: Number(cellAreaSqft.toFixed(0))
+            approxCellAreaSqft: Number(cellAreaSqft.toFixed(0)),
+            nearestDistanceKm: stats.nearestDistanceKm,
+            nearestMarketName: stats.nearestMarketName,
+            rateConfidence: stats.rateConfidence
           }
         });
       }
@@ -1875,13 +1963,24 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
           const contributorCount = Number(activeCell?.contributorCount ?? 0);
           const stepDegrees = Number(activeCell?.stepDegrees ?? 0);
           const areaSqft = Number(activeCell?.approxCellAreaSqft ?? 0);
+          const nearestMarketName = String(activeCell?.nearestMarketName ?? "");
+          const nearestMarketDistanceKm = Number(activeCell?.nearestDistanceKm ?? 0);
+          const rateConfidence = activeCell?.rateConfidence ?? "inferred";
           const selectedCurrency = selectedMarketCurrencyRef.current;
           const avgPriceLocalPerSqft = fromUsd(avgPriceUsdPerSqft, selectedCurrency);
+          const basisLabel =
+            rateConfidence === "local"
+              ? "Local observations"
+              : rateConfidence === "regional"
+                ? "Regional interpolation"
+                : "Long-range interpolation";
           popupHtml =
             `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
               `<strong style="display:block; margin-bottom:4px;">Nearest city: ${nearestCityLabel}</strong>` +
               `<span style="color:#cbd5e1;">Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft</span><br/>` +
               `<span style="color:#94a3b8;">USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft</span><br/>` +
+              `<span style="color:#94a3b8;">Basis: ${basisLabel}</span><br/>` +
+              `<span style="color:#94a3b8;">Nearest market: ${nearestMarketName || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)</span><br/>` +
               `<span style="color:#cbd5e1;">Contributors: ${contributorCount}</span><br/>` +
               `<span style="color:#94a3b8;">Grid step: ${stepDegrees.toFixed(5)} deg</span><br/>` +
               `<span style="color:#94a3b8;">Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft</span>` +

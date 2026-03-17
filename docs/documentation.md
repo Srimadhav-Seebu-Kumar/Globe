@@ -66,6 +66,8 @@
 - 2026-03-17 12:20 GST: Added roadmap-critical intelligence endpoints in `apps/api` for broker profiles (`/v1/brokers`), parcel compare mode (`/v1/compare`), and memo export (`/v1/export/memo`) plus role-safe server routing updates.
 - 2026-03-17 12:20 GST: Upgraded `apps/web/components/land-intelligence-app.tsx` with real user auth UI, persistent save-search/save-market/save-parcel actions, watchlist-linked alerts, inquiry submission from listing cards, compare tray with memo export, broker profile display, and per-parcel/per-listing freshness+confidence visibility.
 - 2026-03-17 13:55 GST: Patched production container persistence defaults in `apps/api/src/user-store.ts` and `apps/api/src/review-store.ts` to use writable `/tmp/*.json` paths when `NODE_ENV=production`, fixing `500` failures on register/write flows under non-root runtime permissions.
+- 2026-03-17 14:21 GST: Refined globe pricing estimation in `apps/web/components/globe-canvas.tsx` by removing the flat global-average fallback and introducing distance-aware nearest-market interpolation (local Gaussian blend + nearest-neighbor IDW fallback) so rate values vary by exact cursor location.
+- 2026-03-17 14:21 GST: Decoupled map pricing anchors from sidebar market filters in `apps/web/components/land-intelligence-app.tsx` by loading a dedicated global market set for the map layer, preventing filter-driven single-market collapse that produced repeated constant prices across large areas.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -156,6 +158,7 @@
 - 2026-03-17 13:55 GST: Hosted feature validation passed on `http://54.91.200.14:3000` + `/api`: user register `201`, saved-search create `201`, watchlist create `201`, `my/alerts` linked output, compare response items (`2`), memo export filename returned, inquiry create/list success, and Playwright snapshot confirmed new UI controls (`Save market`, account auth form, parcel save buttons, `Compare mode`, broker profiles, freshness/confidence rows, inquiry actions).
 - 2026-03-17 13:58 GST: Re-verified live trust/discoverability pages over public host (`/`, `/about`, `/methodology`, `/data-sources`, `/legal-display`, `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest`); all returned `HTTP 200`.
 - 2026-03-17 13:59 GST: Re-ran authenticated hosted workflow probe against `/api/v1` with a newly registered user: `register`, `me`, `saved-searches` create/list, `watchlists` create/list, `my/alerts`, `brokers`, `compare`, `export/memo`, and `inquiries` create/list all returned expected success statuses (`200/201`) with non-empty feature data.
+- 2026-03-17 14:21 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after location-aware interpolation and map-anchor loading updates.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
