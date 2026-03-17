@@ -844,18 +844,18 @@ const getGridPointerHitRadiusKm = (zoom: number, stepDegrees: number): number =>
   const stepKm = step * 111.32;
 
   if (zoom < 3) {
-    return Math.max(stepKm * 1.2, 170);
+    return Math.max(stepKm * 1.55, 320);
   }
   if (zoom < 6) {
-    return Math.max(stepKm * 1.15, 52);
+    return Math.max(stepKm * 1.35, 120);
   }
   if (zoom < 9) {
-    return Math.max(stepKm * 1.1, 7);
+    return Math.max(stepKm * 1.2, 18);
   }
   if (zoom < 12) {
-    return Math.max(stepKm * 1.1, 2.4);
+    return Math.max(stepKm * 1.15, 4.2);
   }
-  return Math.max(stepKm * 1.05, 1.2);
+  return Math.max(stepKm * 1.1, 2);
 };
 
 const findNearestGridCell = (
@@ -1367,8 +1367,8 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         container: containerRef.current,
         style,
         center: [10, 25],
-        zoom: 1.4,
-        pitch: 52,
+        zoom: 1.2,
+        pitch: 36,
         minZoom: 1,
         maxZoom: 16,
         renderWorldCopies: false,
@@ -1444,12 +1444,13 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
       const maxLiftMeters = getHoverLiftMeters(target.zoom);
       const stepKm = Math.max(0.08, centerCell.stepDegrees * 111.32);
-      const influenceRadiusKm = Math.max(stepKm * 4.4, 12);
+      const pointerRadiusKm = Math.max(stepKm * 3.6, 20);
+      const influenceRadiusKm = Math.max(stepKm * 6.5, 24);
       const nearbyCells = queryNearbyGridCells(
         gridSpatialIndexRef.current,
         latestGridCellsRef.current,
-        centerCell.centerLng,
-        centerCell.centerLat,
+        target.lng,
+        target.lat,
         influenceRadiusKm
       );
       const tierIds = {
@@ -1460,7 +1461,28 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       };
 
       for (const cell of nearbyCells) {
-        const hoverLevel = target.centerGridId === cell.id ? 1 : getHoverLevel(getGridStepDistance(centerCell, cell));
+        const hoverLevel =
+          target.centerGridId === cell.id
+            ? 1
+            : (() => {
+                const cellStepLevel = getHoverLevel(getGridStepDistance(centerCell, cell));
+                if (cellStepLevel <= 0) {
+                  return 0;
+                }
+                const pointerDistanceKm = planarDistanceKm(target.lng, target.lat, cell.centerLng, cell.centerLat);
+                const pointerRatio = pointerDistanceKm / Math.max(1, pointerRadiusKm);
+                const pointerLevel =
+                  pointerRatio <= 0.38
+                    ? 1
+                    : pointerRatio <= 0.72
+                      ? 0.75
+                      : pointerRatio <= 1.06
+                        ? 0.5
+                        : pointerRatio <= 1.42
+                          ? 0.25
+                          : 0;
+                return Math.min(cellStepLevel, pointerLevel);
+              })();
         if (hoverLevel <= 0) {
           continue;
         }
@@ -1502,7 +1524,9 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       if (!target?.centerGridId) {
         return "none";
       }
-      return `${target.centerGridId}:${target.zoom.toFixed(2)}`;
+      const snappedLng = Math.round(target.lng * 40) / 40;
+      const snappedLat = Math.round(target.lat * 40) / 40;
+      return `${target.centerGridId}:${target.zoom.toFixed(2)}:${snappedLng.toFixed(3)}:${snappedLat.toFixed(3)}`;
     };
 
     const scheduleHoverLiftUpdate = (target: HoverLiftTarget | null) => {
@@ -1799,7 +1823,15 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
             "fill-extrusion-color": layer.color,
             "fill-extrusion-base": 0,
             "fill-extrusion-height": 0,
-            "fill-extrusion-opacity": 1
+            "fill-extrusion-opacity": 1,
+            "fill-extrusion-base-transition": {
+              duration: 80,
+              delay: 0
+            },
+            "fill-extrusion-height-transition": {
+              duration: 80,
+              delay: 0
+            }
           }
         });
       }
@@ -2264,7 +2296,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
     mapRef.current.flyTo({
       center: [selected.center.lng, selected.center.lat],
       zoom: Math.max(mapRef.current.getZoom(), 3),
-      pitch: Math.max(mapRef.current.getPitch(), 62),
+      pitch: Math.max(mapRef.current.getPitch(), 44),
       speed: 0.6
     });
   }, [markets, selectedMarketId]);

@@ -168,7 +168,9 @@
 - 2026-03-17 16:08 GST: Resolved rollout blocker `no space left on device` during image pull by running Docker cleanup on host (`docker image prune -af`, `docker builder prune -af`) through SSM (`82fe63a1-e0c6-49d7-a09c-e5626a808aa5`), reclaiming ~3.19 GB before successful retry.
 - 2026-03-17 16:08 GST: Hosted availability checks passed after rollout (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`).
 - 2026-03-17 16:26 GST: Restored spherical globe rendering by switching `apps/web/components/globe-canvas.tsx` style projection from `mercator` to `globe` and adding a runtime `setProjection({ type: "globe" })` safeguard on map load.
+- 2026-03-17 16:49 GST: Improved hover-rise interaction reliability and smoothness in `apps/web/components/globe-canvas.tsx` by widening low-zoom hit radii, switching lift targeting to pointer-aware sampling (not only center-cell changes), reducing default/fly-to pitch for better globe-surface coverage, and adding extrusion height transitions for less rigid animation.
 - 2026-03-17 16:26 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after globe projection restoration.
+- 2026-03-17 16:49 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, and `npm run build -w @globe/web`; all passed after hover-rise reliability/smoothing changes.
 - 2026-03-17 16:33 GST: Built/pushed `globe-web` tags `7e56ec4` and `latest`, then rolled EC2 web container via SSM (`d4767b08-8535-49dd-97e0-0cb0a9b25522`) to image `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7e56ec4`.
 - 2026-03-17 16:33 GST: Hosted probes after rollout remained healthy (`http://54.91.200.14:3000/` -> `200`, `/api/v1/markets?limit=1` -> `200`) and Playwright screenshot verification confirmed spherical globe geometry in viewport (`live-globe-restored.png`).
 
