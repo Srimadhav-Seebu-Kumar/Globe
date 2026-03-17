@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CONFIDENCE_LABELS, COVERAGE_TIERS, FRESHNESS_TIERS, PRICE_STATES, type CoverageTier, type PriceState } from "@globe/types";
 
@@ -392,15 +393,32 @@ export const LandIntelligenceApp = () => {
   return (
     <main className="shell">
       <header className="topbar">
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <strong>Globe Land Intelligence</strong>
           <span className="badge">Live market intelligence</span>
           <span className="badge">{isLoading ? "Refreshing data" : `${markets.length} markets loaded`}</span>
+          <nav className="topbar-links" aria-label="Trust and documentation pages">
+            <Link className="topbar-link" href="/about">
+              About
+            </Link>
+            <Link className="topbar-link" href="/methodology">
+              Methodology
+            </Link>
+            <Link className="topbar-link" href="/data-sources">
+              Data sources
+            </Link>
+            <Link className="topbar-link" href="/legal-display">
+              Legal display
+            </Link>
+          </nav>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="badge">Window: {windowDays}d</span>
           <span className="badge">Confidence: {minConfidence}</span>
           <span className="badge">Legal: {legalDisplayOnly ? "Strict" : "Inclusive"}</span>
+          <a className="action-button" href="mailto:hello@globelandintelligence.com?subject=Globe%20Land%20Intelligence%20Demo%20Request">
+            Request demo
+          </a>
           <button type="button" className="action-button" onClick={() => setRefreshTick((value) => value + 1)}>
             Refresh
           </button>
@@ -631,8 +649,9 @@ export const LandIntelligenceApp = () => {
           <span>Higher blended $/sqft</span>
         </div>
         <p className="muted-text" style={{ margin: "8px 0 0" }}>
-          Rate model: benchmark $/sqm is converted to $/sqft (÷10.7639), then averaged per map block. Zooming in shrinks block size so
-          each hover average uses fewer, more local samples.
+          Rate model: benchmark $/sqm is converted to $/sqft (divide by 10.7639), then rendered as a 3D adaptive land-only grid. Zooming
+          in increases tile density and shrinks tile area; zooming out coarsens cells for performance. Hover land tiles to raise nearby
+          cells instantly and inspect blended rate + nearest major city context.
         </p>
         <label className="field-label" htmlFor="window-range" style={{ marginTop: 10 }}>
           Observation window: {windowDays} days
