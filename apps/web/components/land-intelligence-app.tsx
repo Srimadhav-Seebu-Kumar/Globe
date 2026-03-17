@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CONFIDENCE_LABELS, COVERAGE_TIERS, FRESHNESS_TIERS, PRICE_STATES, type CoverageTier, type PriceState } from "@globe/types";
+import type { MapPricePoint } from "./globe-canvas";
 
 const GlobeCanvas = dynamic(() => import("./globe-canvas").then((module) => module.GlobeCanvas), {
   ssr: false,
@@ -183,6 +184,25 @@ interface CollectionResponse<T> {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 const USER_SESSION_STORAGE_KEY = "globe_web_user_token";
 const SQM_TO_SQFT = 10.7639;
+const FX_TO_USD: Record<string, number> = {
+  USD: 1,
+  AED: 0.2723,
+  GBP: 1.28,
+  SGD: 0.74,
+  BRL: 0.2,
+  NGN: 0.00063
+};
+const LISTING_STATE_WEIGHTS: Record<PriceState, number> = {
+  ask: 0.88,
+  closed: 1.08,
+  estimate: 0.74,
+  broker_verified: 1.02
+};
+
+const toUsd = (value: number, currencyCode: string): number => {
+  const fx = FX_TO_USD[currencyCode.toUpperCase()] ?? 1;
+  return value * fx;
+};
 
 const formatNumber = (value: number): string => new Intl.NumberFormat("en-US").format(value);
 const formatCurrency = (value: number, currency: string): string =>
@@ -310,6 +330,7 @@ const fetchResource = async <T,>(
 export const LandIntelligenceApp = () => {
   const [markets, setMarkets] = useState<MarketDto[]>([]);
   const [mapMarkets, setMapMarkets] = useState<MarketDto[]>([]);
+  const [mapPricePoints, setMapPricePoints] = useState<MapPricePoint[]>([]);
   const [parcels, setParcels] = useState<ParcelDto[]>([]);
   const [listings, setListings] = useState<ListingDto[]>([]);
   const [alerts, setAlerts] = useState<AlertDto[]>([]);
@@ -620,6 +641,123 @@ export const LandIntelligenceApp = () => {
       controller.abort();
     };
   }, [debouncedWindowDays, isHydratedFromUrl, refreshTick]);
+
+  useEffect(() => {
+    if (!isHydratedFromUrl) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadMapPricePoints = async () => {
+      try {
+        const listingParams = new URLSearchParams({
+          windowDays: String(debouncedWindowDays),
+          limit: "5000"
+        });
+        for (const state of stateFilter) {
+          listingParams.append("state", state);
+        }
+
+        const [allParcels, allListings] = await Promise.all([
+          fetchCollection<ParcelDto>("/v1/parcels?legalDisplayOnly=true&limit=5000", { signal: controller.signal }),
+          fetchCollection<ListingDto>(`/v1/listings?${listingParams.toString()}`, { signal: controller.signal })
+        ]);
+
+        const parcelById = new Map(allParcels.map((parcel) => [parcel.id, parcel]));
+        const aggregate = new Map<
+          string,
+          {
+            label: string;
+            lng: number;
+            lat: number;
+            weightedPriceSum: number;
+            weightSum: number;
+            observations: number;
+          }
+        >();
+
+        for (const listing of allListings) {
+          if (!listing.parcelId) {
+            continue;
+          }
+          const parcel = parcelById.get(listing.parcelId);
+          if (!parcel || !parcel.legalDisplayAllowed || parcel.areaSqm <= 0) {
+            continue;
+          }
+
+          const areaSqft = parcel.areaSqm * SQM_TO_SQFT;
+          if (!Number.isFinite(areaSqft) || areaSqft <= 0) {
+            continue;
+          }
+
+          const pricePerSqftUsd = toUsd(listing.amount, listing.currencyCode) / areaSqft;
+          if (!Number.isFinite(pricePerSqftUsd) || pricePerSqftUsd <= 0) {
+            continue;
+          }
+
+          const stateWeight = LISTING_STATE_WEIGHTS[listing.state] ?? 1;
+          const confidenceWeight =
+            listing.confidence === "verified" ? 1.14 : listing.confidence === "high" ? 1.04 : listing.confidence === "medium" ? 0.9 : 0.8;
+          const freshnessWeight =
+            listing.freshness === "realtime" ? 1.1 : listing.freshness === "daily" ? 1 : listing.freshness === "weekly" ? 0.92 : 0.84;
+          const weight = stateWeight * confidenceWeight * freshnessWeight;
+
+          const existing = aggregate.get(parcel.id);
+          if (existing) {
+            existing.weightedPriceSum += pricePerSqftUsd * weight;
+            existing.weightSum += weight;
+            existing.observations += 1;
+          } else {
+            aggregate.set(parcel.id, {
+              label: `${parcel.title} (${listing.reference})`,
+              lng: parcel.center.lng,
+              lat: parcel.center.lat,
+              weightedPriceSum: pricePerSqftUsd * weight,
+              weightSum: weight,
+              observations: 1
+            });
+          }
+        }
+
+        const points: MapPricePoint[] = [];
+        for (const [parcelId, value] of aggregate) {
+          if (value.weightSum <= 0) {
+            continue;
+          }
+          const avgPricePerSqftUsd = value.weightedPriceSum / value.weightSum;
+          if (!Number.isFinite(avgPricePerSqftUsd) || avgPricePerSqftUsd <= 0) {
+            continue;
+          }
+
+          const confidenceWeight = Math.min(1.55, 0.78 + value.observations * 0.12);
+          points.push({
+            id: `obs-${parcelId}`,
+            label: value.label,
+            source: "listing_observation",
+            lng: value.lng,
+            lat: value.lat,
+            pricePerSqftUsd: Number(avgPricePerSqftUsd.toFixed(2)),
+            confidenceWeight: Number(confidenceWeight.toFixed(2))
+          });
+        }
+
+        setMapPricePoints(points);
+      } catch (requestError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setMapPricePoints([]);
+        setError(requestError instanceof Error ? requestError.message : "Failed to load map price points");
+      }
+    };
+
+    void loadMapPricePoints();
+
+    return () => {
+      controller.abort();
+    };
+  }, [debouncedWindowDays, isHydratedFromUrl, refreshTick, stateFilter]);
 
   useEffect(() => {
     if (!isHydratedFromUrl) {
@@ -1256,6 +1394,7 @@ export const LandIntelligenceApp = () => {
       <section className="map">
         <GlobeCanvas
           markets={mapMarkets.length > 0 ? mapMarkets : markets}
+          pricePoints={mapPricePoints}
           selectedMarketId={selectedMarketId}
           onSelectMarket={setSelectedMarketId}
         />

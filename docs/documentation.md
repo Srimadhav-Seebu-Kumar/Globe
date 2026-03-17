@@ -68,6 +68,8 @@
 - 2026-03-17 13:55 GST: Patched production container persistence defaults in `apps/api/src/user-store.ts` and `apps/api/src/review-store.ts` to use writable `/tmp/*.json` paths when `NODE_ENV=production`, fixing `500` failures on register/write flows under non-root runtime permissions.
 - 2026-03-17 14:21 GST: Refined globe pricing estimation in `apps/web/components/globe-canvas.tsx` by removing the flat global-average fallback and introducing distance-aware nearest-market interpolation (local Gaussian blend + nearest-neighbor IDW fallback) so rate values vary by exact cursor location.
 - 2026-03-17 14:21 GST: Decoupled map pricing anchors from sidebar market filters in `apps/web/components/land-intelligence-app.tsx` by loading a dedicated global market set for the map layer, preventing filter-driven single-market collapse that produced repeated constant prices across large areas.
+- 2026-03-17 15:59 GST: Implemented a tiered per-square-foot pricing method: map grid now prioritizes parcel/listing-derived USD-per-sqft observation points (weighted by state/confidence/freshness), then interpolates locally/regionally, and finally falls back to market benchmark anchors when local observations are sparse.
+- 2026-03-17 15:59 GST: Extended map hover provenance messaging to show whether a cell is driven by observed parcel pricing or benchmark fallback, including nearest priced source label and distance for transparent fallback visibility.
 
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
@@ -161,6 +163,7 @@
 - 2026-03-17 14:21 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after location-aware interpolation and map-anchor loading updates.
 - 2026-03-17 14:34 GST: Built and pushed `globe-web` image tags `7d62437` and `latest` to ECR (`513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web`) for the interpolation/anchor fix.
 - 2026-03-17 14:34 GST: Redeployed only `globe-web` on EC2 host `i-05d8a4403c1852042` via SSM (`a9a2b736-4eff-4eaf-a51b-e7499fc0ae48`); container now runs `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7d62437` and host root probe remains `HTTP 200`.
+- 2026-03-17 15:59 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after introducing observation-driven per-sqft pricing tiers and benchmark fallbacks.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).

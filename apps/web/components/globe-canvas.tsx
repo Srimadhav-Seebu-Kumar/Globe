@@ -25,8 +25,19 @@ interface MarketMapItem {
 
 interface GlobeCanvasProps {
   markets: MarketMapItem[];
+  pricePoints: MapPricePoint[];
   selectedMarketId: string;
   onSelectMarket: (marketId: string) => void;
+}
+
+export interface MapPricePoint {
+  id: string;
+  label: string;
+  source: "listing_observation" | "market_benchmark";
+  lng: number;
+  lat: number;
+  pricePerSqftUsd: number;
+  confidenceWeight: number;
 }
 
 interface LandPolygon {
@@ -47,10 +58,12 @@ interface MajorCity {
 
 interface MarketPoint {
   id: string;
-  name: string;
+  label: string;
+  source: "listing_observation" | "market_benchmark";
   lng: number;
   lat: number;
   pricePerSqftUsd: number;
+  confidenceWeight: number;
 }
 
 type RateConfidenceBand = "local" | "regional" | "inferred";
@@ -72,7 +85,8 @@ interface GridCellMeta {
   stepDegrees: number;
   approxCellAreaSqft: number;
   nearestDistanceKm: number;
-  nearestMarketName: string;
+  nearestPointLabel: string;
+  nearestPointSource: "listing_observation" | "market_benchmark";
   rateConfidence: RateConfidenceBand;
 }
 
@@ -897,7 +911,11 @@ const extractGridCellsFromCollection = (collection: GeoJSON.FeatureCollection<Ge
         stepDegrees: Number(properties?.stepDegrees ?? 0),
         approxCellAreaSqft: Number(properties?.approxCellAreaSqft ?? 0),
         nearestDistanceKm: Number(properties?.nearestDistanceKm ?? 0),
-        nearestMarketName: String(properties?.nearestMarketName ?? ""),
+        nearestPointLabel: String(properties?.nearestPointLabel ?? ""),
+        nearestPointSource:
+          properties?.nearestPointSource === "listing_observation" || properties?.nearestPointSource === "market_benchmark"
+            ? properties.nearestPointSource
+            : "market_benchmark",
         rateConfidence:
           properties?.rateConfidence === "local" ||
           properties?.rateConfidence === "regional" ||
@@ -917,7 +935,8 @@ const computeWeightedRate = (
   avgPricePerSqft: number;
   contributorCount: number;
   nearestDistanceKm: number;
-  nearestMarketName: string;
+  nearestPointLabel: string;
+  nearestPointSource: "listing_observation" | "market_benchmark";
   rateConfidence: RateConfidenceBand;
 } => {
   if (markets.length === 0) {
@@ -925,7 +944,8 @@ const computeWeightedRate = (
       avgPricePerSqft: 0,
       contributorCount: 0,
       nearestDistanceKm: Number.POSITIVE_INFINITY,
-      nearestMarketName: "",
+      nearestPointLabel: "",
+      nearestPointSource: "market_benchmark",
       rateConfidence: "inferred"
     };
   }
@@ -949,7 +969,8 @@ const computeWeightedRate = (
       avgPricePerSqft: 0,
       contributorCount: 0,
       nearestDistanceKm: Number.POSITIVE_INFINITY,
-      nearestMarketName: "",
+      nearestPointLabel: "",
+      nearestPointSource: "market_benchmark",
       rateConfidence: "inferred"
     };
   }
@@ -961,8 +982,10 @@ const computeWeightedRate = (
     if (candidate.localWeight < 0.0015) {
       continue;
     }
-    localWeightedValueSum += candidate.market.pricePerSqftUsd * candidate.localWeight;
-    localWeightSum += candidate.localWeight;
+    const confidenceWeight = Math.max(0.15, candidate.market.confidenceWeight);
+    const finalWeight = candidate.localWeight * confidenceWeight;
+    localWeightedValueSum += candidate.market.pricePerSqftUsd * finalWeight;
+    localWeightSum += finalWeight;
     if (candidate.localWeight > 0.1) {
       localContributorCount += 1;
     }
@@ -980,7 +1003,8 @@ const computeWeightedRate = (
       avgPricePerSqft: Number((localWeightedValueSum / localWeightSum).toFixed(2)),
       contributorCount: Math.max(localContributorCount, 1),
       nearestDistanceKm: Number(nearestDistanceKm.toFixed(1)),
-      nearestMarketName: nearest.market.name,
+      nearestPointLabel: nearest.market.label,
+      nearestPointSource: nearest.market.source,
       rateConfidence
     };
   }
@@ -989,7 +1013,9 @@ const computeWeightedRate = (
   let idwValueSum = 0;
   let idwWeightSum = 0;
   for (const candidate of nearestCandidates) {
-    const weight = 1 / Math.pow(candidate.distanceKm + INTERPOLATION_DISTANCE_OFFSET_KM, INTERPOLATION_DISTANCE_POWER);
+    const confidenceWeight = Math.max(0.15, candidate.market.confidenceWeight);
+    const weight =
+      confidenceWeight / Math.pow(candidate.distanceKm + INTERPOLATION_DISTANCE_OFFSET_KM, INTERPOLATION_DISTANCE_POWER);
     if (!Number.isFinite(weight) || weight <= 0) {
       continue;
     }
@@ -1002,17 +1028,20 @@ const computeWeightedRate = (
       avgPricePerSqft: Number(nearest.market.pricePerSqftUsd.toFixed(2)),
       contributorCount: 1,
       nearestDistanceKm: Number(nearest.distanceKm.toFixed(1)),
-      nearestMarketName: nearest.market.name,
-      rateConfidence: nearest.distanceKm <= 450 ? "regional" : "inferred"
+      nearestPointLabel: nearest.market.label,
+      nearestPointSource: nearest.market.source,
+      rateConfidence: nearest.distanceKm <= 450 && nearest.market.source === "listing_observation" ? "regional" : "inferred"
     };
   }
 
+  const nearestSource = nearest.market.source;
   return {
     avgPricePerSqft: Number((idwValueSum / idwWeightSum).toFixed(2)),
     contributorCount: nearestCandidates.length,
     nearestDistanceKm: Number(nearest.distanceKm.toFixed(1)),
-    nearestMarketName: nearest.market.name,
-    rateConfidence: nearest.distanceKm <= 450 ? "regional" : "inferred"
+    nearestPointLabel: nearest.market.label,
+    nearestPointSource: nearestSource,
+    rateConfidence: nearest.distanceKm <= 450 && nearestSource === "listing_observation" ? "regional" : "inferred"
   };
 };
 
@@ -1029,6 +1058,7 @@ const createAdaptiveGridFeatureCollection = (
   polygons: LandPolygon[],
   landIndex: LandSpatialIndex,
   marketRows: MarketMapItem[],
+  mapPricePoints: MapPricePoint[],
   viewportHint?: GridViewportHint
 ): GeoJSON.FeatureCollection<GeoJSON.Polygon> => {
   let south = Math.max(MIN_RENDER_LAT, bounds.getSouth());
@@ -1045,15 +1075,29 @@ const createAdaptiveGridFeatureCollection = (
   }
 
   const ranges = viewportHint ? getLongitudeRangesFromCenter(viewportHint.centerLng, viewportHint.lngSpan) : getLongitudeRanges(bounds);
-  const markets = marketRows
+  const marketBenchmarks = marketRows
     .filter((market) => market.benchmarkPricePerSqm > 0)
     .map<MarketPoint>((market) => ({
       id: market.id,
-      name: market.name,
+      label: `${market.name} benchmark`,
+      source: "market_benchmark",
       lng: market.center.lng,
       lat: market.center.lat,
-      pricePerSqftUsd: toUsd(market.benchmarkPricePerSqm, market.benchmarkCurrency) / SQM_TO_SQFT
+      pricePerSqftUsd: toUsd(market.benchmarkPricePerSqm, market.benchmarkCurrency) / SQM_TO_SQFT,
+      confidenceWeight: 0.55
     }));
+  const observationPoints = mapPricePoints
+    .filter((point) => Number.isFinite(point.pricePerSqftUsd) && point.pricePerSqftUsd > 0)
+    .map<MarketPoint>((point) => ({
+      id: point.id,
+      label: point.label,
+      source: point.source,
+      lng: point.lng,
+      lat: point.lat,
+      pricePerSqftUsd: point.pricePerSqftUsd,
+      confidenceWeight: Math.max(0.2, point.confidenceWeight)
+    }));
+  const markets = observationPoints.length > 0 ? [...observationPoints, ...marketBenchmarks] : marketBenchmarks;
   const marketPrices = markets.map((market) => market.pricePerSqftUsd);
   const marketMinPrice = marketPrices.length > 0 ? Math.min(...marketPrices) : 0;
   const marketMaxPrice = marketPrices.length > 0 ? Math.max(...marketPrices) : marketMinPrice;
@@ -1133,7 +1177,8 @@ const createAdaptiveGridFeatureCollection = (
             stepDegrees: Number(stepDegrees.toFixed(6)),
             approxCellAreaSqft: Number(cellAreaSqft.toFixed(0)),
             nearestDistanceKm: stats.nearestDistanceKm,
-            nearestMarketName: stats.nearestMarketName,
+            nearestPointLabel: stats.nearestPointLabel,
+            nearestPointSource: stats.nearestPointSource,
             rateConfidence: stats.rateConfidence
           }
         });
@@ -1240,7 +1285,7 @@ const setBasemapMode = (map: maplibregl.Map, satelliteEnabled: boolean) => {
   }
 };
 
-export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
+export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -1249,6 +1294,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     features: []
   });
   const latestMarketsRef = useRef<MarketMapItem[]>([]);
+  const latestPricePointsRef = useRef<MapPricePoint[]>([]);
   const landPolygonsRef = useRef<LandPolygon[]>([]);
   const landSpatialIndexRef = useRef<LandSpatialIndex>({ buckets: new Map() });
   const majorCitiesRef = useRef<MajorCity[]>([]);
@@ -1298,9 +1344,10 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
 
   useEffect(() => {
     latestMarketsRef.current = markets;
+    latestPricePointsRef.current = pricePoints;
     marketVersionRef.current += 1;
     lastGridRenderSnapshotRef.current = null;
-  }, [markets]);
+  }, [markets, pricePoints]);
 
   useEffect(() => {
     const selectedMarket = markets.find((market) => market.id === selectedMarketId);
@@ -1500,6 +1547,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
         landPolygonsRef.current,
         landSpatialIndexRef.current,
         latestMarketsRef.current,
+        latestPricePointsRef.current,
         viewportHint
       );
 
@@ -1963,11 +2011,13 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
           const contributorCount = Number(activeCell?.contributorCount ?? 0);
           const stepDegrees = Number(activeCell?.stepDegrees ?? 0);
           const areaSqft = Number(activeCell?.approxCellAreaSqft ?? 0);
-          const nearestMarketName = String(activeCell?.nearestMarketName ?? "");
+          const nearestPointLabel = String(activeCell?.nearestPointLabel ?? "");
+          const nearestPointSource = activeCell?.nearestPointSource ?? "market_benchmark";
           const nearestMarketDistanceKm = Number(activeCell?.nearestDistanceKm ?? 0);
           const rateConfidence = activeCell?.rateConfidence ?? "inferred";
           const selectedCurrency = selectedMarketCurrencyRef.current;
           const avgPriceLocalPerSqft = fromUsd(avgPriceUsdPerSqft, selectedCurrency);
+          const sourceLabel = nearestPointSource === "listing_observation" ? "Nearest observed parcel" : "Nearest market benchmark";
           const basisLabel =
             rateConfidence === "local"
               ? "Local observations"
@@ -1980,7 +2030,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
               `<span style="color:#cbd5e1;">Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft</span><br/>` +
               `<span style="color:#94a3b8;">USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft</span><br/>` +
               `<span style="color:#94a3b8;">Basis: ${basisLabel}</span><br/>` +
-              `<span style="color:#94a3b8;">Nearest market: ${nearestMarketName || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)</span><br/>` +
+              `<span style="color:#94a3b8;">${sourceLabel}: ${nearestPointLabel || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)</span><br/>` +
               `<span style="color:#cbd5e1;">Contributors: ${contributorCount}</span><br/>` +
               `<span style="color:#94a3b8;">Grid step: ${stepDegrees.toFixed(5)} deg</span><br/>` +
               `<span style="color:#94a3b8;">Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft</span>` +
@@ -2152,6 +2202,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
           landPolygonsRef.current,
           landSpatialIndexRef.current,
           markets,
+          pricePoints,
           viewportHint
         );
         const gridCells = extractGridCellsFromCollection(collection);
@@ -2188,7 +2239,7 @@ export const GlobeCanvas = ({ markets, selectedMarketId, onSelectMarket }: Globe
     }
 
     applyUpdates();
-  }, [marketFeatureCollection, markets]);
+  }, [marketFeatureCollection, markets, pricePoints]);
 
   useEffect(() => {
     if (!selectedMarketId) {
