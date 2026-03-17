@@ -36,6 +36,33 @@
 
 - 2026-03-15 15:05 GST: Added zoom-adaptive global price-grid intelligence on the web globe: converts benchmark $/sqm to $/sqft, aggregates by dynamic geospatial blocks, applies gray→green→yellow→red→purple spectrum, and shows per-block hover averages with sample counts.
 
+- 2026-03-16 19:53 GST: Added root `Makefile` with `up` automation (`kill-port` + `install` + `run`) to clear listeners on a target port, install dependencies, and start the web app.
+- 2026-03-16 20:14 GST: Updated `Makefile` launch flow to start both API and web services (`API_PORT` + `WEB_PORT`) and hardened port cleanup by skipping PID `0` process entries.
+- 2026-03-16 20:29 GST: Replaced the web globe's fixed rectangular price blocks with a global land-only interactive surface that continuously blends rates and lifts nearby samples around the mouse cursor.
+- 2026-03-16 20:49 GST: Refined the globe interaction layer by fixing the MapLibre zoom-expression constraint in uplift rendering, increasing land sample density to 1° for fuller global coverage, and replacing oversized city dots with text-first market labels + invisible hit areas.
+- 2026-03-16 20:56 GST: Tuned cursor interaction footprint to city-scale maximum by reducing influence radius to 20-45km (zoom adaptive) with a hard distance cutoff.
+- 2026-03-16 21:09 GST: Expanded hover/location UX by adding Natural Earth major-city labels, nearest-city hover reporting, and immediate mousemove-driven surface updates; adjusted interaction radius to a slightly larger city/metro scale (70-140km with hard cutoff).
+- 2026-03-16 22:01 GST: Reworked the web globe to a stricter interactive land-only adaptive grid (no marker dots), added glyph-backed text labels for major cities/markets, removed purple from map+legend heat ramps, and tightened zoom behavior so grid density increases continuously while panning/zooming.
+- 2026-03-16 22:01 GST: Added viewport-aware grid span estimation (canvas+zoom driven) so high-zoom cell size is based on visible map area instead of coarse globe bounds, improving fine-grain density at city-level views.
+- 2026-03-16 22:16 GST: Upgraded the land grid to 3D extrusion rendering (Mapbox-buildings style zoom ramp) and added mouse-centered dynamic lift states so nearby land cells rise interactively on hover (deck/hexagon-style behavior).
+- 2026-03-16 22:16 GST: Increased max zoom resolution and adaptive tile density to support much finer project-like tiles at deep zoom while retaining land-only masking and nearest-major-city hover context.
+- 2026-03-16 22:29 GST: Reworked 3D grid color coding to be price-driven and non-saturating by deriving per-view dynamic color scores from blended avg $/sqft (percentile-clamped with market-range fallback), eliminating the all-red world effect.
+- 2026-03-16 22:38 GST: Fixed false inland "No land grid cell" hover cases by adding robust nearest-cell fallback hit testing (independent of extrusion face picking), and improved hover responsiveness with a spatial index for lift/radius queries.
+- 2026-03-16 23:24 GST: Updated hover interaction to strict tiered uplift behavior (center cell `100%`, surrounding rings `75%`, `50%`, `25%`) with hover-only rendering (no persistent colored grid at rest) and immediate pointer-driven updates.
+- 2026-03-16 23:24 GST: Added explicit hover extrusion tier layers plus pointer-safe popup behavior (`pointer-events: none`) so hover state does not collapse while the tooltip is visible; shifted popup offset to keep hover geometry clearer around cursor.
+- 2026-03-16 23:48 GST: Upgraded place-label rendering for zoomed-in readability by adding a dense Natural Earth places source (`ne_10m_populated_places_simple.geojson`) and introducing zoom-tiered symbol layers (`major`/`regional`/`local`) with population-aware sort and viewport-aligned text.
+- 2026-03-16 23:48 GST: Reordered map labeling to render place names above the land grid/extrusions so labels remain visible while navigating and zooming, closer to mainstream map behavior.
+- 2026-03-17 00:07 GST: Fixed coastal saw-tooth rendering by wiring the `ocean-mask` source to loaded land polygons at runtime, so ocean fill cleanly clips grid/extrusion visuals to coastline geometry.
+- 2026-03-17 00:42 GST: Optimized globe rendering performance by adding a bucketed land spatial index for land-hit checks, throttling + snapshot-based grid regeneration during pan/zoom, and frame-batching hover/popup updates with redundant DOM/filter update suppression.
+- 2026-03-17 01:03 GST: Patched AWS bootstrap helper script defects in `infra/aws/scripts/bootstrap.ps1` (`$GithubRepo` interpolation and command-arg binding) discovered during live provisioning.
+- 2026-03-17 01:10 GST: Completed AWS hosting deployment via EC2 fallback after App Runner API returned `SubscriptionRequiredException`; pushed `globe-api|web|admin:latest` images to ECR and launched `GlobeHostedStack` instance running all three containers on host network.
+- 2026-03-17 10:23 GST: Added a web globe basemap toggle for satellite mode in `apps/web/components/globe-canvas.tsx`, using Esri World Imagery plus reference transportation/place overlays to deliver a hybrid satellite view with map labels.
+- 2026-03-17 10:23 GST: Refined map control behavior for the new basemap by centralizing satellite/map layer visibility switching and disabling duplicate default attribution control in favor of a single explicit compact attribution control.
+- 2026-03-17 11:32 GST: Added trust/SEO production baseline in `apps/web` with metadata hardening, generated `robots.txt`/`sitemap.xml`/`manifest.webmanifest`, and new trust documentation routes (`/about`, `/methodology`, `/data-sources`, `/legal-display`) linked from the main app header.
+- 2026-03-17 11:32 GST: Addressed audit data-UX inconsistencies by clarifying confidence badges (`min confidence` vs `market confidence`), normalizing grid-rate messaging to USD-equivalent units, and surfacing benchmark units as both local-currency `/sqm` and `/sqft`.
+- 2026-03-17 11:32 GST: Added conversion/workflow actions directly in the web UI (request demo, add listing, report issue, save-search/parcel rollout notices), URL deep-link persistence for filters/market state, and mobile/tap map interaction fallback (`click`/`touchstart`/`touchmove`) for hover-dependent workflows.
+- 2026-03-17 11:32 GST: Expanded seeded Dubai depth in `apps/api/src/data.ts` with additional parcel/listing/alert/activity records to reduce proof-of-concept thinness and better reflect live workflow density in the detail panel.
+
 ## Verification log
 - 2026-03-12 22:40 GST: `npm install` completed successfully (0 vulnerabilities).
 - 2026-03-12 22:42 GST: `npm run lint` passed across all workspaces.
@@ -73,6 +100,51 @@
 
 - 2026-03-15 15:12 GST: Re-ran `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build`; all passed after global $/sqft hover-grid implementation.
 - 2026-03-15 15:16 GST: Captured globe screenshot with zoom-adaptive $/sqft block overlay via Playwright (`artifacts/web-global-sqft-grid.png`).
+
+- 2026-03-16 19:50 GST: Environment constraint noted: `make` is not installed in this session (`make` command not found), so direct target invocation could not be executed here.
+- 2026-03-16 19:52 GST: Verified `Makefile` workflow commands directly (port cleanup on `4010`, `npm install`, `npm run build:packages`, `npx next dev -p 4010`); startup probe returned `HTTP 200`.
+- 2026-03-16 19:53 GST: Re-ran `npm run test`; all workspaces passed after the automation file addition.
+- 2026-03-16 20:11 GST: Launched API (`:4000`) and web (`:3000`) together with the updated flow and verified the failing proxy path now returns `200` for `/api/v1/markets?...`.
+- 2026-03-16 20:14 GST: Re-ran `npm run test`; all workspaces passed after the dual-service launch update.
+- 2026-03-16 20:24 GST: Re-ran `npm run typecheck`; all workspaces passed after the interactive land-surface implementation.
+- 2026-03-16 20:25 GST: Re-ran `npm run test`; all workspaces passed after the map interaction refactor.
+- 2026-03-16 20:27 GST: Re-ran `npm run build`; production builds for `api`, `web`, and `admin` completed successfully.
+- 2026-03-16 20:29 GST: Browser runtime sanity check passed for `http://127.0.0.1:3000` (page load + interaction shell), with only expected non-blocking `favicon.ico` 404 in console; API proxy probe to `/api/v1/markets?limit=5` returned `200`.
+- 2026-03-16 20:31 GST: Re-ran `npm run lint`; all workspaces passed.
+- 2026-03-16 20:47 GST: Re-ran `npm run typecheck`; all workspaces passed after the MapLibre expression and label-layer refinements.
+- 2026-03-16 20:48 GST: Browser runtime verification confirmed the map no longer reports `Map rendering degraded` for the uplift layer and market data loads (`market selector options=4`, loading overlay cleared).
+- 2026-03-16 20:49 GST: Re-ran `npm run lint` and `npm run test`; all workspaces passed after the interaction/label updates.
+- 2026-03-16 20:56 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after city-scale interaction radius tuning.
+- 2026-03-16 21:05 GST: Runtime hover check confirmed popup appears on mouse move without delay and includes nearest-city text; major cities GeoJSON (`/data/ne_110m_populated_places_simple.json`) is loading successfully.
+- 2026-03-16 21:09 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after major-city labeling and instant-hover updates.
+- 2026-03-16 22:00 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after adaptive-grid and color-ramp refinements.
+- 2026-03-16 22:01 GST: Playwright runtime verification passed on `http://127.0.0.1:3000`: map renders without the previous MapLibre expression error, major-city labels display as text (no city dots), hover popup appears immediately with nearest-city context, and measured grid-step decreases across zoom (`2.08 -> 0.14 -> 0.005` degrees).
+- 2026-03-16 22:04 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after viewport-aware grid span and density-budget tuning.
+- 2026-03-16 22:16 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after 3D extrusion + hover-lift implementation.
+- 2026-03-16 22:16 GST: Playwright runtime verification passed for 3D interaction on `http://127.0.0.1:3000` (no console errors, hover popup live, and deep-zoom adaptive tile measurement observed at `Grid step: 0.00020 deg` / `Approx cell area: 5,072 sqft`).
+- 2026-03-16 22:29 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after dynamic price color-scale refinement.
+- 2026-03-16 22:29 GST: Playwright visual verification confirms globe tiles are now multi-hue and price-distributed (green/yellow/orange/red by avg $/sqft) instead of uniformly red at default view.
+- 2026-03-16 22:38 GST: Re-ran `npm run typecheck`, `npm run lint`, and `npm run test`; all workspaces passed after hover hit-testing and responsiveness optimizations.
+- 2026-03-16 22:38 GST: Playwright probe sweep found no suspicious inland false negatives (`No land grid cell` with nearby city <=120km = 0), and runtime console remained error-free.
+- 2026-03-16 23:24 GST: Re-ran `npm run typecheck -w @globe/web` repeatedly during hover-tier refactor; checks passed after each iterative update (tiered lift logic, extrusion-layer changes, popup pointer behavior, and pitch adjustments).
+- 2026-03-16 23:35 GST: Re-ran full workspace verification stack (`npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`); all commands passed after hover-tier and hover-only rendering updates.
+- 2026-03-16 23:36 GST: Playwright runtime pass on `http://127.0.0.1:3100` confirmed neutral map at rest (no persistent colored grid), immediate hover popup updates with nearest-city text, and active hover cell boundary updates.
+- 2026-03-16 23:49 GST: Verified `apps/web` checks after place-label enhancement (`npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`); all passed.
+- 2026-03-16 23:50 GST: Playwright visual pass captured post-change map snapshots at low/high zoom and London focus with additional place-name density visible at closer zoom levels.
+- 2026-03-16 23:51 GST: Re-ran root `npm run typecheck` to validate monorepo-wide TS contracts after the new place-label source/layers; passed.
+- 2026-03-17 00:08 GST: Verified coastline-mask update with `npm run typecheck -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed.
+- 2026-03-17 00:08 GST: Playwright runtime check on `http://127.0.0.1:3000` confirmed ocean clipping is active with no map-console regressions (only expected `favicon.ico` 404); screenshot artifacts captured as `coastline-mask-check.png` and `coastline-hover-check.png`.
+- 2026-03-17 00:44 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run test -w @globe/web`, `npm run build -w @globe/web`, and full monorepo `npm run typecheck`, `npm run test`, `npm run build`; all passed after performance optimizations.
+- 2026-03-17 00:45 GST: Runtime feature pass on clean web dev server `http://127.0.0.1:3100` (isolated from stale `:3000` process) confirmed market loading, map rendering, hover popup (`Nearest city` + `Blended land rate`), market switching, and zoomed place-label visibility; console remained clean except expected `favicon.ico` 404.
+- 2026-03-17 01:06 GST: AWS identity/runtime checks passed (`python -m awscli sts get-caller-identity`), ECR repositories validated (`globe-api`, `globe-web`, `globe-admin`), and Docker image push to ECR completed for all three services.
+- 2026-03-17 01:13 GST: EC2 runtime verification passed on instance `i-05d8a4403c1852042` (`54.91.200.14`) with containers `globe-api|web|admin` all `Up`; public probes returned `HTTP 200` for web (`:3000`) and admin (`:3001`).
+- 2026-03-17 01:14 GST: Playwright smoke checks on hosted URLs confirmed web market data loads (4 markets), hover popup shows nearest city + blended rate, and admin sign-in succeeds with configured operator credentials.
+- 2026-03-17 10:23 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after satellite-mode implementation.
+- 2026-03-17 10:23 GST: Local runtime verification passed on `http://127.0.0.1:3100` with `dev:api` (`:4000`) and web dev server active: satellite toggle switches between `Satellite Mode` and `Map Mode`, Esri imagery + labels render, and attribution is shown once without duplicate controls.
+- 2026-03-17 11:32 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, `npm run build -w @globe/web`, `npm run typecheck -w @globe/api`, and `npm run test -w @globe/api`; all passed after audit-driven UX/data/depth updates.
+- 2026-03-17 11:32 GST: Local Playwright validation on `http://127.0.0.1:3100` confirmed URL-state hydration (`q/coverage/state/minConfidence/windowDays/legalDisplayOnly/marketId`), URL persistence on filter changes, tap/click-triggered map popup behavior, and benchmark/confidence label clarity.
+- 2026-03-17 11:32 GST: Deployed multiple incremental batches to AWS EC2-hosted stack (`i-05d8a4403c1852042`, `54.91.200.14`) by building/pushing `globe-web` and `globe-api` images to ECR and restarting containers via SSM; deployment command IDs logged (`17573b0b-a239-4cec-8a2f-053f3a31f9fb`, `9a7ffecc-5986-4403-971c-4c056d7849b9`, `d42d44d4-cda9-494c-b9a9-cb7d97c5d462`).
+- 2026-03-17 11:32 GST: Hosted runtime verification passed on `http://54.91.200.14:3000` and `/api` proxy endpoints: trust routes/SEO assets return `200`, updated UX copy is visible, and Dubai detail reflects expanded live depth (`Parcels (5)`, `Price observations (10)`, `Active alerts (3)`, `Activity log (4)`).
 
 ## Open gaps
 - API currently uses seeded in-memory datasets (no persistent database binding yet).
