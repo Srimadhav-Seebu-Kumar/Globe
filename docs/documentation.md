@@ -159,6 +159,8 @@
 - 2026-03-17 13:58 GST: Re-verified live trust/discoverability pages over public host (`/`, `/about`, `/methodology`, `/data-sources`, `/legal-display`, `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest`); all returned `HTTP 200`.
 - 2026-03-17 13:59 GST: Re-ran authenticated hosted workflow probe against `/api/v1` with a newly registered user: `register`, `me`, `saved-searches` create/list, `watchlists` create/list, `my/alerts`, `brokers`, `compare`, `export/memo`, and `inquiries` create/list all returned expected success statuses (`200/201`) with non-empty feature data.
 - 2026-03-17 14:21 GST: Re-ran `npm run typecheck -w @globe/web`, `npm run lint -w @globe/web`, `npm run test -w @globe/web`, and `npm run build -w @globe/web`; all passed after location-aware interpolation and map-anchor loading updates.
+- 2026-03-17 14:34 GST: Built and pushed `globe-web` image tags `7d62437` and `latest` to ECR (`513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web`) for the interpolation/anchor fix.
+- 2026-03-17 14:34 GST: Redeployed only `globe-web` on EC2 host `i-05d8a4403c1852042` via SSM (`a9a2b736-4eff-4eaf-a51b-e7499fc0ae48`); container now runs `513129860602.dkr.ecr.us-east-1.amazonaws.com/globe-web:7d62437` and host root probe remains `HTTP 200`.
 
 ## 30/60/90 audit status (2026-03-17)
 - First 30 days: **Mostly done** (`robots.txt`, `sitemap.xml`, methodology/source/legal pages, canonical typed model, confidence/unit clarity fixes); **not done** = trusted domain + HTTPS (still raw HTTP IP endpoint).
