@@ -5,6 +5,15 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CONFIDENCE_LABELS, COVERAGE_TIERS, FRESHNESS_TIERS, PRICE_STATES, type CoverageTier, type PriceState } from "@globe/types";
 import type { MapPricePoint } from "./globe-canvas";
+import { AppShell, type ActiveView } from "./ui/AppShell";
+import { CommandPalette } from "./ui/CommandPalette";
+import { TickerTape } from "./ui/TickerTape";
+import { FloatingLegend } from "./ui/FloatingLegend";
+import { MetricToggle, type GlobeMetric } from "./ui/MetricToggle";
+import { CompareGrid } from "./ui/CompareGrid";
+import { WatchlistPage } from "./ui/WatchlistPage";
+import type { WatchlistCardItem } from "./ui/WatchlistCard";
+import { ParcelDossier } from "./ui/ParcelDossier";
 
 const GlobeCanvas = dynamic(() => import("./globe-canvas").then((module) => module.GlobeCanvas), {
   ssr: false,
@@ -390,6 +399,12 @@ export const LandIntelligenceApp = () => {
   const [windowDays, setWindowDays] = useState<number>(90);
   const [legalDisplayOnly, setLegalDisplayOnly] = useState<boolean>(true);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  // AppShell UI state
+  const [activeView, setActiveView] = useState<ActiveView>("globe");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [activeMetric, setActiveMetric] = useState<GlobeMetric>("ask");
+  const [drawerParcelId, setDrawerParcelId] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -1381,8 +1396,195 @@ export const LandIntelligenceApp = () => {
     }
   };
 
+  // ── Data transforms for new UI components ─────────────────────
+
+  const tickerItems = useMemo(() =>
+    events.slice(0, 20).map((e) => ({
+      id: e.id,
+      marketName: markets.find((m) => m.id === e.marketId)?.name ?? e.marketId,
+      summary: e.summary,
+      category: e.category,
+      occurredAt: e.occurredAt
+    })), [events, markets]);
+
+  const watchlistGroups = useMemo(() => {
+    const byType: Record<string, typeof watchlistItems> = {};
+    for (const item of watchlistItems) {
+      const key = item.type;
+      if (!byType[key]) byType[key] = [];
+      byType[key].push(item);
+    }
+    return Object.entries(byType).map(([type, items]) => ({
+      id: type,
+      name: type === "market" ? "Markets" : "Parcels",
+      type: type as "market" | "parcel",
+      items: items.map((item): WatchlistCardItem => ({
+        id: item.id,
+        type: item.type,
+        label: item.label,
+        marketName: item.marketId ? (markets.find((m) => m.id === item.marketId)?.name ?? item.marketId) : "—",
+        hasAlert: userAlerts.some((a) => (a as { watchlistItemId?: string }).watchlistItemId === item.id),
+        savedAt: item.createdAt
+      }))
+    }));
+  }, [watchlistItems, markets, userAlerts]);
+
+  const compareGridItems = useMemo(() =>
+    (compareResult?.items ?? []).map((item) => ({
+      parcelId: item.parcelId,
+      parcelTitle: item.parcelTitle,
+      marketId: item.marketId,
+      marketName: item.marketName,
+      areaSqm: item.areaSqm,
+      latestListingState: item.latestListingState,
+      latestListingAmount: item.latestListingAmount,
+      latestListingCurrencyCode: item.latestListingCurrencyCode,
+      averageObservedAmount: item.averageObservedAmount,
+      observationCount: item.observationCount,
+      latestObservedAt: item.latestObservedAt
+    })), [compareResult]);
+
+  const drawerParcel = drawerParcelId ? parcels.find((p) => p.id === drawerParcelId) ?? null : null;
+  const drawerListings = drawerParcelId ? listings.filter((l) => l.parcelId === drawerParcelId) : [];
+
   return (
-    <main className="shell">
+    <>
+      {/* ── New AppShell ─────────────────────────────────── */}
+      <AppShell
+        activeView={activeView}
+        onViewChange={setActiveView}
+        ticker={tickerItems.length > 0 ? <TickerTape items={tickerItems} /> : undefined}
+        legend={<FloatingLegend metric={activeMetric} />}
+        userEmail={currentUser?.email}
+        userName={currentUser?.name}
+        onLogout={() => void logoutUser()}
+        onCommandPalette={() => setCommandPaletteOpen(true)}
+        drawerState={drawerParcel ? {
+          open: true,
+          title: drawerParcel.legalDisplayAllowed ? drawerParcel.title : "Restricted Parcel",
+          subtitle: drawerParcel.legalDisplayAllowed ? drawerParcel.canonicalParcelId : undefined,
+          content: (
+            <ParcelDossier
+              parcel={{
+                id: drawerParcel.id,
+                title: drawerParcel.legalDisplayAllowed ? drawerParcel.title : "Restricted Parcel",
+                canonicalParcelId: drawerParcel.canonicalParcelId,
+                marketName: markets.find((m) => m.id === drawerParcel.marketId)?.name ?? drawerParcel.marketId,
+                areaSqm: drawerParcel.areaSqm,
+                zoningCode: drawerParcel.zoningCode,
+                coverageTier: drawerParcel.coverageTier,
+                confidence: drawerParcel.confidence,
+                freshness: drawerParcel.freshness,
+                legalDisplayAllowed: drawerParcel.legalDisplayAllowed,
+                updatedAt: drawerParcel.updatedAt
+              }}
+              listings={drawerListings.map((l) => ({
+                id: l.id,
+                state: l.state,
+                amount: l.amount,
+                currencyCode: l.currencyCode,
+                observedAt: l.observedAt,
+                sourceName: l.sourceName,
+                brokerName: l.brokerName
+              }))}
+              isWatchlisted={watchlistItems.some((w) => w.parcelId === drawerParcelId)}
+              isComparing={compareParcelIds.includes(drawerParcelId ?? "")}
+              onWatchlist={() => drawerParcel && void saveParcelWatchlist(drawerParcel)}
+              onCompare={() => drawerParcelId && toggleCompareParcel(drawerParcelId)}
+            />
+          )
+        } : { open: false }}
+        onCloseDrawer={() => setDrawerParcelId(null)}
+      >
+        {/* ── Globe View ── */}
+        {activeView === "globe" && (
+          <div className="relative h-full w-full">
+            <GlobeCanvas
+              markets={mapMarkets.length > 0 ? mapMarkets : markets}
+              pricePoints={mapPricePoints}
+              selectedMarketId={selectedMarketId}
+              onSelectMarket={(id) => { setSelectedMarketId(id); setDrawerParcelId(null); }}
+            />
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+              <MetricToggle
+                active={activeMetric}
+                onChange={setActiveMetric}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Compare View ── */}
+        {activeView === "compare" && (
+          <div className="h-full overflow-hidden bg-[var(--bg-base)]">
+            <CompareGrid
+              parcels={compareGridItems}
+              onRemove={(id) => setCompareParcelIds((prev) => prev.filter((p) => p !== id))}
+              onAdd={() => setActiveView("globe")}
+              onExport={() => {
+                if (compareParcelIds.length > 0) {
+                  void (async () => {
+                    try {
+                      const memo = await fetchResource<ExportMemoDto>(`/v1/export/memo?${compareParcelIds.map((id) => `parcelId=${id}`).join("&")}`, { token: authToken });
+                      const blob = new Blob([memo.content], { type: memo.mimeType });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url; a.download = memo.filename; a.click();
+                      URL.revokeObjectURL(url);
+                    } catch {}
+                  })();
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Watchlist View ── */}
+        {activeView === "watchlist" && (
+          <div className="h-full overflow-hidden bg-[var(--bg-base)]">
+            <WatchlistPage
+              groups={watchlistGroups}
+              loading={isLoading}
+              onRemoveItem={(id) => {
+                void (async () => {
+                  try {
+                    await fetch(`${API_BASE_URL}/v1/watchlists/${id}`, {
+                      method: "DELETE",
+                      headers: buildHeaders(authToken)
+                    });
+                    setWatchlistItems((prev) => prev.filter((w) => w.id !== id));
+                  } catch {}
+                })();
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Markets / Alerts / Settings — legacy shell ── */}
+        {(activeView === "markets" || activeView === "alerts" || activeView === "settings") && (
+          <div className="h-full overflow-auto p-6">
+            <p className="text-[var(--text-secondary)] text-[13px]">
+              {activeView === "markets" ? "Markets view — select a market from the globe." : activeView === "alerts" ? `${alerts.length} active alert${alerts.length !== 1 ? "s" : ""} configured.` : "Settings"}
+            </p>
+          </div>
+        )}
+      </AppShell>
+
+      {/* ── CommandPalette ── */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        items={[
+          ...markets.slice(0, 20).map((m) => ({
+            id: m.id, label: m.name, description: m.region, group: "Markets",
+            onSelect: () => { setSelectedMarketId(m.id); setActiveView("globe"); setCommandPaletteOpen(false); }
+          }))
+        ]}
+      />
+
+      {/* ── Legacy shell (hidden — kept for reference / graceful fallback) ── */}
+      <div style={{ display: "none" }} aria-hidden="true">
+      <main className="shell" id="legacy-shell">
       <header className="topbar">
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <strong>Globe Land Intelligence</strong>
@@ -2158,5 +2360,7 @@ export const LandIntelligenceApp = () => {
         </div>
       ) : null}
     </main>
+      </div>
+    </>
   );
 };

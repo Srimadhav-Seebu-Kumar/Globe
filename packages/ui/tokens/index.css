@@ -1,0 +1,69 @@
+/* Globe Design System — Token Index */
+@import './colors.css';
+@import './typography.css';
+@import './spacing.css';
+@import './layout.css';
+@import './animations.css';
+
+/* ── Global Reset & Base ─────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-loose);
+  color: var(--text-primary);
+  background-color: var(--bg-base);
+  overflow: hidden;
+}
+
+/* ── Scrollbar Styling ───────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+/* ── Focus Ring ──────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Selection ───────────────────────────────────── */
+::selection {
+  background: rgba(59, 130, 246, 0.25);
+  color: var(--text-primary);
+}
+
+/* ── Monospace Numbers ───────────────────────────── */
+.font-data {
+  font-family: var(--font-mono);
+  font-size: var(--text-data);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}

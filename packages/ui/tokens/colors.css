@@ -1,0 +1,113 @@
+/* Globe Design System — Color Tokens */
+
+:root {
+  /* ── Base / Background ─────────────────────────── */
+  --bg-base: #0A0E17;
+  --bg-surface: #111827;
+  --bg-elevated: #1A2332;
+  --bg-overlay: rgba(17, 24, 39, 0.85);
+  --bg-input: #1E293B;
+
+  /* ── Borders ───────────────────────────────────── */
+  --border-subtle: #1E293B;
+  --border-default: #334155;
+  --border-strong: #475569;
+  --border-focus: #3B82F6;
+
+  /* ── Text ──────────────────────────────────────── */
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-tertiary: #64748B;
+  --text-inverse: #0A0E17;
+  --text-disabled: #475569;
+  --text-link: #60A5FA;
+
+  /* ── Price-State Semantic ──────────────────────── */
+  --price-ask: #3B82F6;
+  --price-ask-bg: rgba(59, 130, 246, 0.12);
+  --price-ask-border: rgba(59, 130, 246, 0.3);
+
+  --price-closed: #10B981;
+  --price-closed-bg: rgba(16, 185, 129, 0.12);
+  --price-closed-border: rgba(16, 185, 129, 0.3);
+
+  --price-estimate: #F59E0B;
+  --price-estimate-bg: rgba(245, 158, 11, 0.12);
+  --price-estimate-border: rgba(245, 158, 11, 0.3);
+
+  --price-broker-verified: #8B5CF6;
+  --price-broker-verified-bg: rgba(139, 92, 246, 0.12);
+  --price-broker-verified-border: rgba(139, 92, 246, 0.3);
+
+  /* ── Freshness ─────────────────────────────────── */
+  --freshness-live: #10B981;
+  --freshness-daily: #3B82F6;
+  --freshness-weekly: #F59E0B;
+  --freshness-stale: #EF4444;
+
+  /* ── Confidence ────────────────────────────────── */
+  --confidence-verified: #10B981;
+  --confidence-high: #3B82F6;
+  --confidence-medium: #F59E0B;
+  --confidence-low: #EF4444;
+
+  /* ── Coverage Tier ─────────────────────────────── */
+  --tier-a: #64748B;
+  --tier-b: #3B82F6;
+  --tier-c: #8B5CF6;
+
+  /* ── Accents ───────────────────────────────────── */
+  --accent-primary: #3B82F6;
+  --accent-primary-hover: #60A5FA;
+  --accent-primary-active: #2563EB;
+  --accent-success: #10B981;
+  --accent-warning: #F59E0B;
+  --accent-danger: #EF4444;
+  --accent-danger-hover: #F87171;
+  --accent-purple: #8B5CF6;
+
+  /* ── Map ───────────────────────────────────────── */
+  --map-ocean: #031327;
+  --map-land: #0F1F35;
+  --map-border: #1E3A5F;
+  --map-grid-low: rgba(59, 130, 246, 0.2);
+  --map-grid-medium: rgba(59, 130, 246, 0.45);
+  --map-grid-high: rgba(139, 92, 246, 0.6);
+
+  /* ── Status ────────────────────────────────────── */
+  --status-healthy: #10B981;
+  --status-degraded: #F59E0B;
+  --status-offline: #EF4444;
+
+  /* ── Shadows ───────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.7);
+  --shadow-glow-blue: 0 0 20px rgba(59, 130, 246, 0.25);
+  --shadow-glow-green: 0 0 20px rgba(16, 185, 129, 0.25);
+}
+
+/* ── Light Mode (Admin Console) ────────────────────── */
+[data-theme="light"] {
+  --bg-base: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #F1F5F9;
+  --bg-overlay: rgba(248, 250, 252, 0.9);
+  --bg-input: #F8FAFC;
+
+  --border-subtle: #E2E8F0;
+  --border-default: #CBD5E1;
+  --border-strong: #94A3B8;
+
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-tertiary: #94A3B8;
+  --text-inverse: #F8FAFC;
+  --text-disabled: #CBD5E1;
+  --text-link: #2563EB;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
