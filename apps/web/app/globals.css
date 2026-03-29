@@ -192,3 +192,69 @@
   .market-board { grid-template-columns: 1fr; }
   .loading-overlay { inset: auto 14px 54px auto; }
 }
+
+/* ── New UI: Responsive range input thumb ─────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-blue, #3B82F6);
+  border: 2px solid var(--bg-surface, #111827);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.4);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-blue, #3B82F6);
+  border: 2px solid var(--bg-surface, #111827);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.4);
+}
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--border-focus, rgba(59,130,246,0.5));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── New UI: Touch-friendly tap targets ───────────────── */
+@media (hover: none) and (pointer: coarse) {
+  /* Increase minimum tap target size on touch devices */
+  button, [role="button"], [role="switch"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ── New UI: Focus ring for keyboard nav ──────────────── */
+.focus-ring:focus-visible,
+[data-focus-visible]:focus-visible {
+  outline: 2px solid var(--border-focus, rgba(59,130,246,0.5));
+  outline-offset: 2px;
+}
+
+/* ── New UI: Skip to main content link ────────────────── */
+.skip-to-main {
+  position: absolute;
+  top: -100%;
+  left: 8px;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--accent-blue, #3B82F6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 0 0 8px 8px;
+  text-decoration: none;
+  transition: top 0.1s;
+}
+.skip-to-main:focus {
+  top: 0;
+}

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { BottomPanel } from "./BottomPanel";
 import { RightDrawer } from "./RightDrawer";
+import { AnimatePresence, motion } from "framer-motion";
 
 // ── Nav icons ─────────────────────────────────────────────────
 const GlobeNavIcon = () => (
@@ -87,6 +88,21 @@ interface AppShellProps {
   onCloseDrawer?: (() => void) | undefined;
 }
 
+const MobileMenuIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+    <line x1="2" y1="5" x2="16" y2="5" />
+    <line x1="2" y1="9" x2="16" y2="9" />
+    <line x1="2" y1="13" x2="16" y2="13" />
+  </svg>
+);
+
+const MobileCloseIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+    <line x1="4" y1="4" x2="14" y2="14" />
+    <line x1="14" y1="4" x2="4" y2="14" />
+  </svg>
+);
+
 export function AppShell({
   children,
   activeView = "globe",
@@ -102,7 +118,24 @@ export function AppShell({
   onCloseDrawer
 }: AppShellProps) {
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const sidebarWidth = sidebarExpanded ? "var(--sidebar-width-expanded)" : "var(--sidebar-width-collapsed)";
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile viewport
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  // Close mobile nav when view changes
+  useEffect(() => {
+    if (mobileNavOpen) setMobileNavOpen(false);
+  }, [activeView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sidebarWidth = isMobile ? "0px" : sidebarExpanded ? "var(--sidebar-width-expanded)" : "var(--sidebar-width-collapsed)";
 
   const navItems = [
     { id: "globe" as ActiveView, label: "Globe", icon: <GlobeNavIcon /> },
@@ -119,13 +152,15 @@ export function AppShell({
 
   return (
     <div className="full-bleed" style={{ fontFamily: "var(--font-sans)" }}>
-      {/* Sidebar */}
-      <Sidebar
-        items={navItems}
-        bottomItems={bottomItems as never}
-        activeId={activeView}
-        onNavigate={(id) => onViewChange?.(id as ActiveView)}
-      />
+      {/* Desktop sidebar (hidden on mobile) */}
+      {!isMobile && (
+        <Sidebar
+          items={navItems}
+          bottomItems={bottomItems as never}
+          activeId={activeView}
+          onNavigate={(id) => onViewChange?.(id as ActiveView)}
+        />
+      )}
 
       {/* Top bar */}
       <TopBar
@@ -135,27 +170,145 @@ export function AppShell({
         userEmail={userEmail}
         userName={userName}
         onLogout={onLogout}
+        actions={isMobile ? (
+          <button
+            onClick={() => setMobileNavOpen((v) => !v)}
+            className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-md)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileNavOpen}
+          >
+            {mobileNavOpen ? <MobileCloseIcon /> : <MobileMenuIcon />}
+          </button>
+        ) : undefined}
       />
+
+      {/* Mobile nav overlay */}
+      <AnimatePresence>
+        {isMobile && mobileNavOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[var(--z-drawer)]"
+              onClick={() => setMobileNavOpen(false)}
+              aria-hidden="true"
+            />
+            {/* Slide-in nav panel */}
+            <motion.nav
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 350, damping: 35 }}
+              className="fixed top-0 left-0 bottom-0 w-64 bg-[var(--bg-surface)] border-r border-[var(--border-subtle)] z-[calc(var(--z-drawer)+1)] flex flex-col"
+              aria-label="Mobile navigation"
+            >
+              {/* Nav header */}
+              <div className="flex items-center justify-between px-4 h-[var(--top-bar-height)] border-b border-[var(--border-subtle)] shrink-0">
+                <span className="text-[13px] font-semibold text-[var(--text-primary)]">Globe</span>
+                <button
+                  onClick={() => setMobileNavOpen(false)}
+                  className="w-7 h-7 flex items-center justify-center rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]"
+                  aria-label="Close navigation"
+                >
+                  <MobileCloseIcon />
+                </button>
+              </div>
+
+              {/* Nav items */}
+              <div className="flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
+                {navItems.map((item) => {
+                  const isActive = item.id === activeView;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => { onViewChange?.(item.id); setMobileNavOpen(false); }}
+                      className={[
+                        "flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-md)] text-left w-full transition-colors",
+                        isActive
+                          ? "bg-[rgba(59,130,246,0.12)] text-[var(--accent-blue)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+                      ].join(" ")}
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <span className="shrink-0">{item.icon}</span>
+                      <span className="text-[13px] font-medium">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* User info at bottom */}
+              {(userEmail ?? userName) && (
+                <div className="px-4 py-3 border-t border-[var(--border-subtle)] shrink-0">
+                  <p className="text-[12px] font-medium text-[var(--text-primary)] truncate">{userName ?? userEmail}</p>
+                  {userName && userEmail && <p className="text-[11px] text-[var(--text-tertiary)] truncate">{userEmail}</p>}
+                  {onLogout && (
+                    <button
+                      onClick={() => { onLogout?.(); setMobileNavOpen(false); }}
+                      className="mt-2 text-[12px] text-[var(--accent-danger)] hover:underline"
+                    >
+                      Sign out
+                    </button>
+                  )}
+                </div>
+              )}
+            </motion.nav>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Main content area */}
       <main
         style={{
           marginLeft: sidebarWidth,
           marginTop: "var(--top-bar-height)",
-          marginBottom: "var(--bottom-panel-height-collapsed)",
+          marginBottom: isMobile ? "56px" : "var(--bottom-panel-height-collapsed)",
           transition: "margin-left 300ms var(--ease-in-out)"
         }}
-        className="h-[calc(100vh-var(--top-bar-height)-var(--bottom-panel-height-collapsed))] overflow-hidden relative"
+        className={`overflow-hidden relative ${isMobile
+          ? "h-[calc(100vh-var(--top-bar-height)-56px)]"
+          : "h-[calc(100vh-var(--top-bar-height)-var(--bottom-panel-height-collapsed))]"
+        }`}
       >
         {children}
       </main>
 
-      {/* Bottom panel */}
-      <BottomPanel
-        sidebarWidth={sidebarWidth}
-        ticker={ticker}
-        legend={legend}
-      />
+      {/* Mobile bottom tab bar */}
+      {isMobile ? (
+        <nav
+          className="fixed bottom-0 left-0 right-0 h-14 bg-[var(--bg-surface)] border-t border-[var(--border-subtle)] z-[var(--z-header)] flex items-stretch"
+          aria-label="Bottom navigation"
+        >
+          {navItems.slice(0, 5).map((item) => {
+            const isActive = item.id === activeView;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onViewChange?.(item.id)}
+                className={[
+                  "flex-1 flex flex-col items-center justify-center gap-1 transition-colors",
+                  isActive ? "text-[var(--accent-blue)]" : "text-[var(--text-tertiary)]"
+                ].join(" ")}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
+              >
+                {item.icon}
+                <span className="text-[9px] font-medium leading-none">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      ) : (
+        /* Desktop bottom panel */
+        <BottomPanel
+          sidebarWidth={sidebarWidth}
+          ticker={ticker}
+          legend={legend}
+        />
+      )}
 
       {/* Right drawer */}
       {drawerState && (

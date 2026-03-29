@@ -14,6 +14,8 @@ import { CompareGrid } from "./ui/CompareGrid";
 import { WatchlistPage } from "./ui/WatchlistPage";
 import type { WatchlistCardItem } from "./ui/WatchlistCard";
 import { ParcelDossier } from "./ui/ParcelDossier";
+import { MarketPanel } from "./ui/MarketPanel";
+import { FilterBar, DEFAULT_FILTERS, type FilterState } from "./ui/FilterBar";
 
 const GlobeCanvas = dynamic(() => import("./globe-canvas").then((module) => module.GlobeCanvas), {
   ssr: false,
@@ -405,6 +407,8 @@ export const LandIntelligenceApp = () => {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [activeMetric, setActiveMetric] = useState<GlobeMetric>("ask");
   const [drawerParcelId, setDrawerParcelId] = useState<string | null>(null);
+  const [filterBarState, setFilterBarState] = useState<FilterState>(DEFAULT_FILTERS);
+  const [showFilterBar, setShowFilterBar] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -1560,12 +1564,113 @@ export const LandIntelligenceApp = () => {
           </div>
         )}
 
-        {/* ── Markets / Alerts / Settings — legacy shell ── */}
-        {(activeView === "markets" || activeView === "alerts" || activeView === "settings") && (
+        {/* ── Markets View ── */}
+        {activeView === "markets" && (
+          <div className="flex h-full overflow-hidden bg-[var(--bg-base)]">
+            {showFilterBar && (
+              <FilterBar
+                value={filterBarState}
+                onChange={setFilterBarState}
+                loading={isLoading || isDetailsLoading}
+                resultCount={parcels.length + listings.length}
+                className="w-56 shrink-0 h-full"
+              />
+            )}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Globe inset */}
+              <div className="flex-1 relative min-w-0">
+                <GlobeCanvas
+                  markets={mapMarkets.length > 0 ? mapMarkets : markets}
+                  pricePoints={mapPricePoints}
+                  selectedMarketId={selectedMarketId}
+                  onSelectMarket={(id) => { setSelectedMarketId(id); setDrawerParcelId(null); }}
+                />
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
+                  <MetricToggle active={activeMetric} onChange={setActiveMetric} />
+                  <button
+                    onClick={() => setShowFilterBar((v) => !v)}
+                    className={[
+                      "h-7 px-3 rounded-full text-[12px] font-medium glass shadow-[var(--shadow-md)] transition-all",
+                      showFilterBar ? "text-[var(--accent-blue)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    ].join(" ")}
+                    aria-pressed={showFilterBar}
+                    aria-label="Toggle filter panel"
+                  >
+                    Filters
+                  </button>
+                </div>
+              </div>
+              {/* Market detail panel */}
+              <div className="w-80 shrink-0 border-l border-[var(--border-subtle)] bg-[var(--bg-surface)] overflow-hidden">
+                <MarketPanel
+                  market={selectedMarket ? {
+                    id: selectedMarket.id,
+                    name: selectedMarket.name,
+                    region: selectedMarket.region,
+                    countryCode: selectedMarket.countryCode,
+                    timezone: selectedMarket.timezone,
+                    coverageTier: selectedMarket.coverageTier,
+                    confidence: selectedMarket.confidence,
+                    freshness: selectedMarket.freshness,
+                    activityScore: selectedMarket.activityScore,
+                    activeListings: selectedMarket.activeListings,
+                    closedTransactions: selectedMarket.closedTransactions,
+                    benchmarkPricePerSqm: selectedMarket.benchmarkPricePerSqm,
+                    benchmarkCurrency: selectedMarket.benchmarkCurrency,
+                    updatedAt: selectedMarket.updatedAt
+                  } : null}
+                  listings={listings.map((l) => ({
+                    id: l.id,
+                    reference: l.reference,
+                    state: l.state,
+                    amount: l.amount,
+                    currencyCode: l.currencyCode,
+                    observedAt: l.observedAt,
+                    sourceName: l.sourceName,
+                    brokerName: l.brokerName,
+                    freshness: l.freshness,
+                    confidence: l.confidence
+                  }))}
+                  alerts={alerts}
+                  loading={isDetailsLoading}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Alerts View ── */}
+        {activeView === "alerts" && (
           <div className="h-full overflow-auto p-6">
-            <p className="text-[var(--text-secondary)] text-[13px]">
-              {activeView === "markets" ? "Markets view — select a market from the globe." : activeView === "alerts" ? `${alerts.length} active alert${alerts.length !== 1 ? "s" : ""} configured.` : "Settings"}
-            </p>
+            <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-4">Active Alerts ({alerts.length})</h2>
+            {alerts.length === 0 ? (
+              <p className="text-[var(--text-tertiary)] text-[13px]">No alerts configured. Set alerts from any market or parcel view.</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-w-lg">
+                {alerts.map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${a.isActive ? "bg-[var(--accent-success)]" : "bg-[var(--text-tertiary)]"}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-[var(--text-primary)] truncate">{a.title}</p>
+                      <p className="text-[11px] text-[var(--text-tertiary)]">{a.ruleType.replace("_", " ")}</p>
+                    </div>
+                    {a.lastTriggeredAt && (
+                      <span className="text-[11px] text-[var(--text-tertiary)] shrink-0">
+                        {new Date(a.lastTriggeredAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Settings View ── */}
+        {activeView === "settings" && (
+          <div className="h-full overflow-auto p-6 max-w-lg">
+            <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-4">Settings</h2>
+            <p className="text-[13px] text-[var(--text-tertiary)]">Settings panel coming soon.</p>
           </div>
         )}
       </AppShell>

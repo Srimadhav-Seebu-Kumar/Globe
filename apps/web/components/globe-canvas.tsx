@@ -106,6 +106,22 @@ interface HoverPointerState {
   lat: number;
 }
 
+interface DotParticle {
+  id: string;
+  homeLng: number;
+  homeLat: number;
+  lng: number;
+  lat: number;
+  priceScore: number;
+  phase: number;
+  speed: number;
+  idleLngDeg: number;
+  idleLatDeg: number;
+  velocityLngDeg: number;
+  velocityLatDeg: number;
+  maxOffsetKm: number;
+}
+
 interface LandSpatialIndex {
   buckets: Map<string, LandPolygon[]>;
 }
@@ -177,10 +193,22 @@ const GRID_UPDATE_MIN_INTERVAL_MS = 90;
 const INTERPOLATION_NEIGHBOR_COUNT = 4;
 const INTERPOLATION_DISTANCE_OFFSET_KM = 24;
 const INTERPOLATION_DISTANCE_POWER = 1.35;
-const HOVER_SPREAD_MULTIPLIER = 4;
+const HOVER_SPREAD_MULTIPLIER = 1.5;
 const HOVER_VIEWPORT_HEIGHT_RATIO_CAP = 0.2;
-const MAX_HOVER_INFLUENCE_CELLS = 1200;
+const MAX_HOVER_INFLUENCE_CELLS = 320;
+const DOT_PARTICLE_MAX_VISIBLE = 9000;
+const DOT_PARTICLE_IDLE_FRACTION_MIN = 0.012;
+const DOT_PARTICLE_IDLE_FRACTION_MAX = 0.038;
+const DOT_PARTICLE_SPRING_STIFFNESS = 5.2;
+const DOT_PARTICLE_DAMPING = 0.9;
+const DOT_PARTICLE_PULL_STRENGTH = 0.82;
+const DOT_PARTICLE_SWIRL_STRENGTH = 0.28;
+const DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC = 1.7;
+const DOT_PARTICLE_MAX_INTERACTION_RADIUS_KM = 880;
+const DOT_PARTICLE_BASE_ALPHA = 0.26;
+const DOT_PARTICLE_HOVER_ALPHA_BOOST = 0.18;
 const sqftNumberFormatter = new Intl.NumberFormat("en-US");
+const dotColorCache = new Map<string, string>();
 const FX_TO_USD: Record<string, number> = {
   USD: 1,
   AED: 0.2723,
@@ -709,6 +737,16 @@ const shortestLongitudeDelta = (lngA: number, lngB: number): number => {
   return rawDelta > 180 ? 360 - rawDelta : rawDelta;
 };
 
+const shortestLongitudeDeltaSigned = (fromLng: number, toLng: number): number => {
+  let delta = normalizeLongitude(toLng) - normalizeLongitude(fromLng);
+  if (delta > 180) {
+    delta -= 360;
+  } else if (delta < -180) {
+    delta += 360;
+  }
+  return delta;
+};
+
 const planarDistanceKm = (lngA: number, latA: number, lngB: number, latB: number): number => {
   const meanLatRadians = toRadians((latA + latB) / 2);
   const deltaLng = shortestLongitudeDelta(lngA, lngB);
@@ -718,39 +756,172 @@ const planarDistanceKm = (lngA: number, latA: number, lngB: number, latB: number
   return Math.sqrt(dx * dx + dy * dy);
 };
 
-const getHoverLiftMeters = (zoom: number): number => {
+const seededNoise = (seed: number): number => {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+};
+
+const getDotColor = (priceScore: number, alpha: number): string => {
+  const normalizedScore = Math.max(0, Math.min(1, priceScore));
+  const normalizedAlpha = Math.max(0.05, Math.min(0.9, alpha));
+  const scoreKey = Math.round(normalizedScore * 20);
+  const alphaKey = Math.round(normalizedAlpha * 100);
+  const cacheKey = `${scoreKey}:${alphaKey}`;
+  const cached = dotColorCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const red = Math.round(96 + normalizedScore * 76);
+  const green = Math.round(154 + normalizedScore * 40);
+  const blue = Math.round(208 - normalizedScore * 52);
+  const color = `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha.toFixed(2)})`;
+  dotColorCache.set(cacheKey, color);
+  return color;
+};
+
+const getDotBudgetForZoom = (zoom: number): number => {
   if (zoom < 3) {
-    return 1400;
+    return 2800;
   }
-  if (zoom < 5) {
-    return 2200;
-  }
-  if (zoom < 7) {
-    return 3400;
+  if (zoom < 6) {
+    return 4500;
   }
   if (zoom < 9) {
-    return 5200;
+    return 6400;
+  }
+  if (zoom < 12) {
+    return 7800;
+  }
+  return DOT_PARTICLE_MAX_VISIBLE;
+};
+
+const createDotParticlesFromGridCells = (cells: GridCellMeta[], zoom: number): DotParticle[] => {
+  if (cells.length === 0) {
+    const fallbackCount = Math.min(getDotBudgetForZoom(zoom), 1800);
+    const fallback: DotParticle[] = [];
+    for (let index = 0; index < fallbackCount; index += 1) {
+      const lng = normalizeLongitude(-180 + seededNoise(index * 17 + 1) * 360);
+      const lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, -68 + seededNoise(index * 23 + 3) * 136));
+      fallback.push({
+        id: `fallback:${index}`,
+        homeLng: lng,
+        homeLat: lat,
+        lng,
+        lat,
+        priceScore: 0.35,
+        phase: seededNoise(index * 29 + 5) * Math.PI * 2,
+        speed: 0.45 + seededNoise(index * 31 + 7) * 0.7,
+        idleLngDeg: 0.03,
+        idleLatDeg: 0.024,
+        velocityLngDeg: 0,
+        velocityLatDeg: 0,
+        maxOffsetKm: 16
+      });
+    }
+    return fallback;
+  }
+
+  const targetBudget = getDotBudgetForZoom(zoom);
+  const priceValues = cells.map((cell) => cell.avgPricePerSqft).filter((value) => Number.isFinite(value) && value > 0);
+  const minPrice = priceValues.length > 0 ? Math.min(...priceValues) : 0;
+  const maxPrice = priceValues.length > 0 ? Math.max(...priceValues) : minPrice;
+  const priceRange = Math.max(0.0001, maxPrice - minPrice);
+  const particles: DotParticle[] = [];
+
+  const desiredCounts = cells.map((cell) => {
+    const normalizedPrice = Math.max(0, Math.min(1, (cell.avgPricePerSqft - minPrice) / priceRange));
+    const zoomBoost = zoom >= 9 ? 1 : zoom >= 6 ? 0.5 : 0;
+    const rawCount = 1 + normalizedPrice * 1.6 + zoomBoost;
+    return Math.max(1, Math.min(4, Math.round(rawCount)));
+  });
+  const maxDesired = desiredCounts.reduce((max, count) => Math.max(max, count), 0);
+
+  let particleSeed = 1;
+  for (let pass = 0; pass < maxDesired; pass += 1) {
+    for (let index = 0; index < cells.length; index += 1) {
+      if (particles.length >= targetBudget) {
+        return particles;
+      }
+
+      const desiredCount = desiredCounts[index] ?? 0;
+      const cell = cells[index];
+      if (!cell || pass >= desiredCount) {
+        continue;
+      }
+
+      const normalizedPrice = Math.max(0, Math.min(1, (cell.avgPricePerSqft - minPrice) / priceRange));
+      const latStretch = Math.max(0.18, Math.cos(toRadians(cell.centerLat)));
+      const spanLng = cell.stepDegrees * latStretch;
+      const spanLat = cell.stepDegrees;
+      const jitterLng = (seededNoise(particleSeed * 29 + pass * 11 + 1) - 0.5) * spanLng * 0.58;
+      const jitterLat = (seededNoise(particleSeed * 31 + pass * 17 + 2) - 0.5) * spanLat * 0.58;
+      const initialLng = normalizeLongitude(cell.centerLng + jitterLng);
+      const initialLat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, cell.centerLat + jitterLat));
+      const idleFraction =
+        DOT_PARTICLE_IDLE_FRACTION_MIN +
+        seededNoise(particleSeed * 13 + 7) * (DOT_PARTICLE_IDLE_FRACTION_MAX - DOT_PARTICLE_IDLE_FRACTION_MIN);
+      const areaSqm = Math.max(1, cell.approxCellAreaSqft / SQM_TO_SQFT);
+      const cellAreaKm2 = areaSqm / 1_000_000;
+      const cellLinearKm = Math.sqrt(Math.max(1e-6, cellAreaKm2));
+      const maxOffsetKm = Math.max(5, Math.min(24, cellLinearKm * 0.14 + 6 + normalizedPrice * 4));
+
+      particles.push({
+        id: `${cell.id}:${pass}`,
+        homeLng: initialLng,
+        homeLat: initialLat,
+        lng: initialLng,
+        lat: initialLat,
+        priceScore: normalizedPrice,
+        phase: seededNoise(particleSeed * 19 + 3) * Math.PI * 2,
+        speed: 0.45 + seededNoise(particleSeed * 23 + 5) * 0.7,
+        idleLngDeg: Math.max(0.000002, spanLng * idleFraction),
+        idleLatDeg: Math.max(0.000002, spanLat * idleFraction),
+        velocityLngDeg: 0,
+        velocityLatDeg: 0,
+        maxOffsetKm
+      });
+
+      particleSeed += 1;
+    }
+  }
+
+  return particles;
+};
+
+const getHoverLiftMeters = (zoom: number): number => {
+  if (zoom < 3) {
+    return 220;
+  }
+  if (zoom < 5) {
+    return 320;
+  }
+  if (zoom < 7) {
+    return 480;
+  }
+  if (zoom < 9) {
+    return 680;
   }
   if (zoom < 11) {
-    return 7200;
+    return 900;
   }
-  return 10000;
+  return 1200;
 };
 
 const getHoverLiftScale = (zoom: number): number => {
   if (zoom < 3) {
-    return 0.9;
+    return 0.35;
   }
   if (zoom < 6) {
-    return 1.4;
+    return 0.45;
   }
   if (zoom < 9) {
-    return 2.1;
+    return 0.55;
   }
   if (zoom < 12) {
-    return 2.9;
+    return 0.68;
   }
-  return 3.6;
+  return 0.78;
 };
 
 const getMetersPerPixelAtLatitude = (lat: number, zoom: number): number => {
@@ -795,6 +966,22 @@ const getHoverInfluenceRadiusKm = (zoom: number, pointerRadiusKm: number, stepKm
     return Math.max(pointerRadiusKm * 1.35, stepKm * 3.1);
   }
   return Math.max(pointerRadiusKm * 1.25, stepKm * 2.4);
+};
+
+const getDotHoverRadiusPx = (zoom: number, viewportMin: number): number => {
+  if (zoom < 3) {
+    return Math.max(56, viewportMin * 0.06);
+  }
+  if (zoom < 6) {
+    return Math.max(64, viewportMin * 0.07);
+  }
+  if (zoom < 9) {
+    return Math.max(72, viewportMin * 0.075);
+  }
+  if (zoom < 12) {
+    return Math.max(80, viewportMin * 0.08);
+  }
+  return Math.max(92, viewportMin * 0.085);
 };
 
 const getHoverLevel = (stepDistance: number): number => {
@@ -1398,6 +1585,7 @@ const setBasemapMode = (map: maplibregl.Map, satelliteEnabled: boolean) => {
 
 export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const dotCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const latestFeatureCollectionRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({
@@ -1423,6 +1611,9 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
   const selectedMarketCurrencyRef = useRef<string>("USD");
   const hoverLiftTargetRef = useRef<HoverLiftTarget | null>(null);
   const lastHoverLiftSignatureRef = useRef<string>("none");
+  const dotParticlesRef = useRef<DotParticle[]>([]);
+  const dotFrameRef = useRef<number | null>(null);
+  const hoverPointerLiveRef = useRef<HoverPointerState | null>(null);
   const pendingHoverPointerRef = useRef<HoverPointerState | null>(null);
   const hoverFrameRef = useRef<number | null>(null);
   const lastPopupHtmlRef = useRef<string>("");
@@ -1477,10 +1668,10 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       map = new maplibregl.Map({
         container: containerRef.current,
         style,
-        center: [10, 25],
-        zoom: 1.2,
-        pitch: 36,
-        minZoom: 1,
+        center: [0, 16],
+        zoom: 0.95,
+        pitch: 10,
+        minZoom: 0.8,
         maxZoom: 16,
         renderWorldCopies: false,
         attributionControl: false
@@ -1519,6 +1710,161 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       }
 
       map.setFilter("land-grid-hover", gridId ? ["==", ["get", "gridId"], gridId] : ["==", ["get", "gridId"], ""]);
+    };
+
+    const resizeDotCanvas = () => {
+      const dotCanvas = dotCanvasRef.current;
+      const container = containerRef.current;
+      if (!dotCanvas || !container) {
+        return;
+      }
+
+      const width = Math.max(1, Math.round(container.clientWidth));
+      const height = Math.max(1, Math.round(container.clientHeight));
+      const dpr = Math.max(1, Math.min(2, globalThis.devicePixelRatio || 1));
+      const nextWidth = Math.round(width * dpr);
+      const nextHeight = Math.round(height * dpr);
+      if (dotCanvas.width !== nextWidth || dotCanvas.height !== nextHeight) {
+        dotCanvas.width = nextWidth;
+        dotCanvas.height = nextHeight;
+      }
+      dotCanvas.style.width = `${width}px`;
+      dotCanvas.style.height = `${height}px`;
+      const context = dotCanvas.getContext("2d");
+      if (context) {
+        context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+    };
+
+    let lastDotFrameTimeMs = globalThis.performance.now();
+    const renderDotField = () => {
+      dotFrameRef.current = globalThis.requestAnimationFrame(renderDotField);
+
+      const dotCanvas = dotCanvasRef.current;
+      if (!dotCanvas) {
+        return;
+      }
+      const context = dotCanvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+
+      const width = Math.max(1, dotCanvas.clientWidth || Math.round(dotCanvas.width / Math.max(1, globalThis.devicePixelRatio || 1)));
+      const height = Math.max(1, dotCanvas.clientHeight || Math.round(dotCanvas.height / Math.max(1, globalThis.devicePixelRatio || 1)));
+      context.clearRect(0, 0, width, height);
+
+      if (!map.isStyleLoaded()) {
+        return;
+      }
+
+      const zoom = map.getZoom();
+      let particles = dotParticlesRef.current;
+      if (particles.length === 0) {
+        dotParticlesRef.current = createDotParticlesFromGridCells([], zoom);
+        particles = dotParticlesRef.current;
+        if (particles.length === 0) {
+          return;
+        }
+      }
+
+      const nowMs = globalThis.performance.now();
+      const dtSeconds = Math.max(0.008, Math.min(0.05, (nowMs - lastDotFrameTimeMs) / 1000 || 0.016));
+      lastDotFrameTimeMs = nowMs;
+      const timeSeconds = nowMs / 1000;
+      const hoverPointer = hoverPointerLiveRef.current;
+      const viewportMin = Math.max(1, Math.min(width, height));
+      const hoverRadiusPx = getDotHoverRadiusPx(zoom, viewportMin);
+      const referenceLat = hoverPointer?.lat ?? map.getCenter().lat;
+      const kmPerPixel = ((156543.03392 * Math.max(0.2, Math.cos(toRadians(referenceLat)))) / Math.pow(2, zoom)) / 1000;
+      const hoverInfluenceRadiusKm = Math.max(
+        45,
+        Math.min(DOT_PARTICLE_MAX_INTERACTION_RADIUS_KM, hoverRadiusPx * Math.max(0.01, kmPerPixel))
+      );
+      const damping = Math.pow(DOT_PARTICLE_DAMPING, dtSeconds * 60);
+
+      for (const particle of particles) {
+        const idleLngDelta = Math.cos(timeSeconds * particle.speed + particle.phase) * particle.idleLngDeg;
+        const idleLatDelta = Math.sin(timeSeconds * (particle.speed * 1.07) + particle.phase * 0.91) * particle.idleLatDeg;
+        const targetLng = normalizeLongitude(particle.homeLng + idleLngDelta);
+        const targetLat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.homeLat + idleLatDelta));
+
+        let accelerationLng = shortestLongitudeDeltaSigned(particle.lng, targetLng) * DOT_PARTICLE_SPRING_STIFFNESS;
+        let accelerationLat = (targetLat - particle.lat) * DOT_PARTICLE_SPRING_STIFFNESS;
+        let hoverInfluence = 0;
+
+        if (hoverPointer) {
+          const pointerDeltaLng = shortestLongitudeDeltaSigned(particle.lng, hoverPointer.lng);
+          const pointerDeltaLat = hoverPointer.lat - particle.lat;
+          const pointerDistanceKm = planarDistanceKm(particle.lng, particle.lat, hoverPointer.lng, hoverPointer.lat);
+          if (pointerDistanceKm <= hoverInfluenceRadiusKm) {
+            const radialStrength = 1 - pointerDistanceKm / Math.max(0.01, hoverInfluenceRadiusKm);
+            hoverInfluence = radialStrength * radialStrength;
+            const pointerMagnitude = Math.hypot(pointerDeltaLng, pointerDeltaLat);
+            if (pointerMagnitude > 1e-6) {
+              const pointerDirectionLng = pointerDeltaLng / pointerMagnitude;
+              const pointerDirectionLat = pointerDeltaLat / pointerMagnitude;
+              const pullStrength = DOT_PARTICLE_PULL_STRENGTH * hoverInfluence;
+              accelerationLng += pointerDirectionLng * pullStrength;
+              accelerationLat += pointerDirectionLat * pullStrength;
+
+              const swirlDirectionLng = -pointerDirectionLat;
+              const swirlDirectionLat = pointerDirectionLng;
+              const swirlStrength =
+                DOT_PARTICLE_SWIRL_STRENGTH * hoverInfluence * Math.sin(timeSeconds * (1.15 + particle.speed * 0.2) + particle.phase);
+              accelerationLng += swirlDirectionLng * swirlStrength;
+              accelerationLat += swirlDirectionLat * swirlStrength;
+            }
+          }
+        }
+
+        particle.velocityLngDeg = (particle.velocityLngDeg + accelerationLng * dtSeconds) * damping;
+        particle.velocityLatDeg = (particle.velocityLatDeg + accelerationLat * dtSeconds) * damping;
+
+        const velocityMagnitude = Math.hypot(particle.velocityLngDeg, particle.velocityLatDeg);
+        if (velocityMagnitude > DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC) {
+          const velocityScale = DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC / velocityMagnitude;
+          particle.velocityLngDeg *= velocityScale;
+          particle.velocityLatDeg *= velocityScale;
+        }
+
+        particle.lng = normalizeLongitude(particle.lng + particle.velocityLngDeg * dtSeconds);
+        particle.lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.lat + particle.velocityLatDeg * dtSeconds));
+
+        const homeDistanceKm = planarDistanceKm(particle.lng, particle.lat, particle.homeLng, particle.homeLat);
+        if (homeDistanceKm > particle.maxOffsetKm) {
+          const homeToCurrentLng = shortestLongitudeDeltaSigned(particle.homeLng, particle.lng);
+          const homeToCurrentLat = particle.lat - particle.homeLat;
+          const clampRatio = particle.maxOffsetKm / Math.max(0.001, homeDistanceKm);
+          particle.lng = normalizeLongitude(particle.homeLng + homeToCurrentLng * clampRatio);
+          particle.lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.homeLat + homeToCurrentLat * clampRatio));
+          particle.velocityLngDeg *= 0.75;
+          particle.velocityLatDeg *= 0.75;
+        }
+
+        const projected = map.project([particle.lng, particle.lat]);
+        if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
+          continue;
+        }
+        if (projected.x < -10 || projected.x > width + 10 || projected.y < -10 || projected.y > height + 10) {
+          continue;
+        }
+
+        const radius = 0.9 + particle.priceScore * 0.55 + hoverInfluence * 0.65;
+        const alpha = DOT_PARTICLE_BASE_ALPHA + particle.priceScore * 0.18 + hoverInfluence * DOT_PARTICLE_HOVER_ALPHA_BOOST;
+        context.fillStyle = getDotColor(particle.priceScore, alpha);
+        context.beginPath();
+        context.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+    };
+
+    const startDotAnimation = () => {
+      resizeDotCanvas();
+      if (dotFrameRef.current !== null) {
+        return;
+      }
+      lastDotFrameTimeMs = globalThis.performance.now();
+      dotFrameRef.current = globalThis.requestAnimationFrame(renderDotField);
     };
 
     const clearHoverLiftState = () => {
@@ -1756,6 +2102,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
       gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
       gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
+      dotParticlesRef.current = createDotParticlesFromGridCells(gridCells, zoom);
 
       gridSource.setData(collection);
 
@@ -1824,6 +2171,8 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       lastGridUpdateAtRef.current = globalThis.performance.now();
       updateGridSource();
     };
+
+    startDotAnimation();
 
     const initializeData = async () => {
       try {
@@ -1987,7 +2336,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
             "fill-extrusion-color": HOVER_RATE_COLOR_EXPRESSION,
             "fill-extrusion-base": 0,
             "fill-extrusion-height": 0,
-            "fill-extrusion-opacity": 1,
+            "fill-extrusion-opacity": 0.16,
             "fill-extrusion-base-transition": {
               duration: 36,
               delay: 0
@@ -2188,18 +2537,13 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         const activeGridId = activeCell?.id ?? null;
 
         setHoverGridId(activeGridId);
-        scheduleHoverLiftUpdate(
-          hasGridCell
-            ? {
-                lng: pointer.lng,
-                lat: pointer.lat,
-                zoom,
-                pointerX: pointer.x,
-                pointerY: pointer.y,
-                ...(activeGridId ? { centerGridId: activeGridId } : {})
-              }
-            : null
-        );
+        hoverPointerLiveRef.current = {
+          x: pointer.x,
+          y: pointer.y,
+          lng: pointer.lng,
+          lat: pointer.lat
+        };
+        scheduleHoverLiftUpdate(null);
         map.getCanvas().style.cursor = hasGridCell ? "crosshair" : "";
 
         const nearestCity = findNearestMajorCity(pointer.lng, pointer.lat, majorCitiesRef.current);
@@ -2314,6 +2658,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           hoverFrameRef.current = null;
         }
         setHoverGridId(null);
+        hoverPointerLiveRef.current = null;
         scheduleHoverLiftUpdate(null);
         map.getCanvas().style.cursor = "";
       };
@@ -2332,6 +2677,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
     const handleResize = () => {
       map.resize();
+      resizeDotCanvas();
       viewportVersionRef.current += 1;
       lastGridRenderSnapshotRef.current = null;
       scheduleGridUpdate();
@@ -2355,11 +2701,17 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         globalThis.cancelAnimationFrame(hoverFrameRef.current);
         hoverFrameRef.current = null;
       }
+      if (dotFrameRef.current !== null) {
+        globalThis.cancelAnimationFrame(dotFrameRef.current);
+        dotFrameRef.current = null;
+      }
       pendingHoverPointerRef.current = null;
+      hoverPointerLiveRef.current = null;
       lastPopupHtmlRef.current = "";
       lastGridRenderSnapshotRef.current = null;
       hoverLiftTargetRef.current = null;
       latestGridCellsRef.current = [];
+      dotParticlesRef.current = [];
       gridCellByIdRef.current.clear();
       gridSpatialIndexRef.current.clear();
       gridStepDegreesRef.current = 0;
@@ -2418,6 +2770,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
         gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
         gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
+        dotParticlesRef.current = createDotParticlesFromGridCells(gridCells, zoom);
 
         hoverLiftTargetRef.current = null;
         for (const layerId of HOVER_EXTRUSION_LAYER_IDS) {
@@ -2461,15 +2814,34 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
     mapRef.current.flyTo({
       center: [selected.center.lng, selected.center.lat],
-      zoom: Math.max(mapRef.current.getZoom(), 3),
-      pitch: Math.max(mapRef.current.getPitch(), 44),
+      zoom: Math.max(mapRef.current.getZoom(), 2.2),
+      pitch: Math.max(mapRef.current.getPitch(), 18),
+      offset: [0, -12],
       speed: 0.6
     });
   }, [markets, selectedMarketId]);
 
   return (
     <div style={{ height: "100%", width: "100%", position: "relative" }}>
-      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
+      <div
+        ref={containerRef}
+        style={{ height: "100%", width: "100%" }}
+        role="application"
+        aria-label="Interactive land intelligence globe map. Use mouse or touch to pan and zoom. Click a market region to view details."
+        tabIndex={0}
+      />
+      <canvas
+        ref={dotCanvasRef}
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          zIndex: 2
+        }}
+      />
       <button
         type="button"
         onClick={() => setSatelliteMode((current) => !current)}

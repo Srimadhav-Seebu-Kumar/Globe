@@ -45,7 +45,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <a href="#main-content" className="skip-to-main">Skip to main content</a>
+        <div id="main-content">{children}</div>
+      </body>
     </html>
   );
 }

@@ -112,18 +112,32 @@ All files in `apps/web/components/ui/`:
 
 ---
 
-## In Progress
+### Phase 10: Market View Panel + FilterBar ✅ (2026-03-29)
 
-- [ ] Market view panel (stats cards, tabbed Listings/Trends/Alerts)
-- [ ] FilterBar (price range slider, size, use-class, tenure, freshness, confidence)
+| Component | File | Description |
+|-----------|------|-------------|
+| MarketPanel | `MarketPanel.tsx` | Tabbed panel: Overview (stats), Listings, Trends, Alerts |
+| FilterBar | `FilterBar.tsx` | Coverage tier, price state, confidence slider, freshness, area, window |
+
+**Integration:** Markets view in AppShell shows globe inset + FilterBar sidebar + MarketPanel right column
+
+### Phase 11: Responsive Layout + Accessibility ✅ (2026-03-29)
+
+- Mobile sidebar overlay (hamburger → Framer Motion slide-in panel)
+- Mobile bottom tab bar (replaces BottomPanel on < 768px)
+- Desktop: sidebar hides on mobile, `sidebarWidth = 0px`
+- Range input custom thumb styling for keyboard + touch
+- Touch tap-targets minimum 44×44px (WCAG 2.5.5)
+- Skip-to-main-content link in layout.tsx
+- Globe canvas: `role="application"` + `aria-label` + `tabIndex={0}`
+- Sidebar buttons: `aria-label` when collapsed (icon-only mode)
 
 ---
 
 ## Pending
 
-- [ ] Responsive layout (mobile bottom sheet, tablet overlay)
-- [ ] Accessibility pass (aria-labels, keyboard nav)
-- [ ] Admin console page layout (light mode, SourceHealthCard grid, JobHistoryTable)
+- [ ] Admin console page layout (light mode, SourceHealthCard grid, JobHistoryTable integration)
+- [ ] `npm run build` final verification ✅ passes 0 errors
 
 ---
 

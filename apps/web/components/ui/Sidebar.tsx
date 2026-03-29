@@ -84,6 +84,7 @@ export function Sidebar({ items, activeId, onNavigate, bottomItems = [], classNa
                   : "text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] border border-transparent"
               ].join(" ")}
               aria-current={isActive ? "page" : undefined}
+              aria-label={!expanded ? item.label : undefined}
             >
               <span className="shrink-0 w-5 h-5 flex items-center justify-center" aria-hidden="true">
                 {item.icon}
@@ -119,6 +120,7 @@ export function Sidebar({ items, activeId, onNavigate, bottomItems = [], classNa
                   onNavigate?.(item.id);
                 }}
                 className="w-full flex items-center gap-3 rounded-[var(--radius-md)] px-2 py-2 text-[13px] font-medium text-[var(--text-tertiary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] transition-all duration-[var(--duration-fast)]"
+                aria-label={!expanded ? item.label : undefined}
               >
                 <span className="shrink-0 w-5 h-5 flex items-center justify-center" aria-hidden="true">{item.icon}</span>
                 {expanded && <span className="flex-1 text-left truncate">{item.label}</span>}
