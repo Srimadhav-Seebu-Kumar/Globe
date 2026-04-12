@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, {
+  type ExpressionSpecification,
+  type FilterSpecification,
   type GeoJSONSource,
   type MapLayerMouseEvent,
   type MapMouseEvent,
   type MapTouchEvent,
   type StyleSpecification
 } from "maplibre-gl";
+import {
+  GRID_MAX_ZOOM,
+  GRID_MIN_ZOOM,
+  SQM_TO_SQFT as SHARED_SQM_TO_SQFT
+} from "../lib/constants";
 import type { CoverageTier } from "@globe/types";
 
 interface MarketMapItem {
@@ -127,7 +134,7 @@ const HOVER_EXTRUSION_LAYERS = [
 ] as const;
 
 const HOVER_EXTRUSION_LAYER_IDS = HOVER_EXTRUSION_LAYERS.map((layer) => layer.id);
-const EMPTY_GRID_FILTER: any = ["==", ["get", "gridId"], ""];
+const EMPTY_GRID_FILTER: FilterSpecification = ["==", ["get", "gridId"], ""];
 
 const style: StyleSpecification = {
   version: 8,
@@ -149,19 +156,31 @@ const style: StyleSpecification = {
 const LANDMASS_GEOJSON_URL = "/data/ne_110m_land.geojson";
 const MAJOR_CITIES_GEOJSON_URL = "/data/ne_110m_populated_places_simple.json";
 const PLACE_LABELS_GEOJSON_URL = "/data/ne_10m_populated_places_simple.geojson";
-const SATELLITE_TILE_URL = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_ATTRIBUTION = "Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community";
+// Esri World Imagery — free tile service, no API key required, native max zoom 19.
+// Attribution is mandatory per Esri's terms of use.
+const SATELLITE_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+];
+// Esri World Boundaries and Places reference overlay (country borders + place labels).
+const SATELLITE_LABELS_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+];
+const SATELLITE_ATTRIBUTION =
+  'Tiles © <a href="https://www.esri.com/">Esri</a> — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 const SATELLITE_LAYER_ID = "satellite-imagery";
-const SATELLITE_LABELS_TILE_URL =
-  "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_ROADS_TILE_URL =
-  "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_REFERENCE_ATTRIBUTION = "Reference (c) Esri";
+// Esri World Transportation — road network reference overlay.
+const SATELLITE_ROADS_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+];
+const SATELLITE_REFERENCE_ATTRIBUTION =
+  'Reference © <a href="https://www.esri.com/">Esri</a> — World Boundaries & Places, World Transportation';
+/** Esri World Imagery native max zoom. */
+const SATELLITE_MAX_NATIVE_ZOOM = 19;
 const SATELLITE_LABELS_LAYER_ID = "satellite-reference-labels";
 const SATELLITE_ROADS_LAYER_ID = "satellite-reference-roads";
 const SATELLITE_REFERENCE_LAYER_IDS = [SATELLITE_ROADS_LAYER_ID, SATELLITE_LABELS_LAYER_ID] as const;
 const DARK_BASE_LAYER_IDS = ["landmass-fill", "landmass-outline", "graticule-lines", "ocean-mask-fill"] as const;
-const SQM_TO_SQFT = 10.7639;
+const SQM_TO_SQFT = SHARED_SQM_TO_SQFT;
 const EARTH_RADIUS_KM = 6371;
 const GRID_MAX_FEATURES = 12000;
 const MIN_RENDER_LAT = -82;
@@ -231,28 +250,38 @@ const emptyOceanMaskCollection: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
 };
 
 const getGridStepDegrees = (zoom: number): number => {
-  const normalizedZoom = Math.max(1, Math.min(zoom, 16));
+  const normalizedZoom = Math.max(GRID_MIN_ZOOM, Math.min(zoom, GRID_MAX_ZOOM));
   const computedStep = 3 / Math.pow(2, Math.max(0, normalizedZoom - 2));
   return Math.max(0.00008, Number(computedStep.toFixed(6)));
 };
 
+// Continuous blend radius (km) across the full zoom range. Prior implementation
+// used a step function which produced visible grid jumps at integer boundaries.
+// Keyed anchor points: z1 → 2200km, z4 → 1200km, z8 → 520km, z12 → 220km,
+// z16 → 120km, z19 → 80km. Piecewise linear between these anchors.
+const BLEND_RADIUS_ANCHORS: ReadonlyArray<readonly [number, number]> = [
+  [1, 2200],
+  [4, 1200],
+  [8, 520],
+  [12, 220],
+  [16, 120],
+  [19, 80]
+];
+
 const getBlendRadiusKm = (zoom: number): number => {
-  if (zoom < 2) {
-    return 2200;
+  const clampedZoom = Math.max(GRID_MIN_ZOOM, Math.min(zoom, GRID_MAX_ZOOM));
+  for (let i = 0; i < BLEND_RADIUS_ANCHORS.length - 1; i += 1) {
+    const left = BLEND_RADIUS_ANCHORS[i];
+    const right = BLEND_RADIUS_ANCHORS[i + 1];
+    if (!left || !right) continue;
+    const [z0, r0] = left;
+    const [z1, r1] = right;
+    if (clampedZoom >= z0 && clampedZoom <= z1) {
+      const t = (clampedZoom - z0) / (z1 - z0);
+      return r0 + (r1 - r0) * t;
+    }
   }
-  if (zoom < 4) {
-    return 1600;
-  }
-  if (zoom < 6) {
-    return 900;
-  }
-  if (zoom < 8) {
-    return 520;
-  }
-  if (zoom < 10) {
-    return 300;
-  }
-  return 160;
+  return BLEND_RADIUS_ANCHORS[BLEND_RADIUS_ANCHORS.length - 1]?.[1] ?? 160;
 };
 
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
@@ -441,7 +470,9 @@ const ensureClosedRing = (ring: [number, number][]): [number, number][] => {
     return ring;
   }
 
-  if (Math.abs(last[0] - first[0]) < 1e-9 && Math.abs(last[1] - first[1]) < 1e-9) {
+  // GeoJSON coordinates have ~6 decimal places of precision (~11cm at the
+  // equator); 1e-6 is a realistic epsilon for ring closure.
+  if (Math.abs(last[0] - first[0]) < 1e-6 && Math.abs(last[1] - first[1]) < 1e-6) {
     return ring;
   }
 
@@ -810,20 +841,23 @@ const getHoverLevel = (stepDistance: number): number => {
   return 0;
 };
 
-const buildHoverHeightExpression = (entries: Array<{ id: string; height: number }>): any => {
+const buildHoverHeightExpression = (
+  entries: Array<{ id: string; height: number }>
+): ExpressionSpecification | number => {
   if (entries.length === 0) {
     return 0;
   }
 
-  const expression: any[] = ["match", ["get", "gridId"]];
+  // "match" expression alternates keys and outputs, then a default.
+  const expression: unknown[] = ["match", ["get", "gridId"]];
   for (const entry of entries) {
     expression.push(entry.id, Number(entry.height.toFixed(2)));
   }
   expression.push(0);
-  return expression;
+  return expression as unknown as ExpressionSpecification;
 };
 
-const HOVER_RATE_COLOR_EXPRESSION: any = [
+const HOVER_RATE_COLOR_EXPRESSION: ExpressionSpecification = [
   "interpolate",
   ["linear"],
   ["coalesce", ["get", "colorScore"], 0.5],
@@ -901,6 +935,44 @@ const buildGridSpatialIndex = (cells: GridCellMeta[]): Map<string, GridCellMeta[
   }
 
   return index;
+};
+
+// H6 — Incremental spatial index update: reuses an existing index,
+// removing cells that are no longer present and inserting new ones. Avoids
+// the full O(n) rebuild previously done on every pan/zoom.
+const updateGridSpatialIndex = (
+  previous: Map<string, GridCellMeta[]>,
+  removedIds: Set<string>,
+  added: GridCellMeta[]
+): Map<string, GridCellMeta[]> => {
+  if (removedIds.size === 0 && added.length === 0) {
+    return previous;
+  }
+
+  const next = new Map<string, GridCellMeta[]>();
+  if (removedIds.size > 0) {
+    for (const [key, bucket] of previous) {
+      const filtered = bucket.filter((cell) => !removedIds.has(cell.id));
+      if (filtered.length > 0) next.set(key, filtered);
+    }
+  } else {
+    // Shallow-clone buckets so callers can safely push without mutating the previous index.
+    for (const [key, bucket] of previous) next.set(key, bucket.slice());
+  }
+
+  for (const cell of added) {
+    const lngBucket = toGridLngBucket(cell.centerLng);
+    const latBucket = toGridLatBucket(cell.centerLat);
+    const key = getGridBucketKey(lngBucket, latBucket);
+    const bucketCells = next.get(key);
+    if (bucketCells) {
+      bucketCells.push(cell);
+    } else {
+      next.set(key, [cell]);
+    }
+  }
+
+  return next;
 };
 
 const queryNearbyGridCells = (
@@ -1257,7 +1329,13 @@ const createAdaptiveGridFeatureCollection = (
           continue;
         }
 
-        const gridId = `${currentLngStart.toFixed(5)}:${currentLatStart.toFixed(5)}:${stepDegrees.toFixed(5)}`;
+        // Quantise coordinates to 1e-7 deg integer keys (~1.1 cm at equator).
+        // Avoids float-string precision collisions of `toFixed(5)` while
+        // remaining well below the minimum grid step at max zoom.
+        const gridId =
+          `${Math.round(currentLngStart * 1e7)}:` +
+          `${Math.round(currentLatStart * 1e7)}:` +
+          `${Math.round(stepDegrees * 1e7)}`;
         const featureId = features.length + 1;
         const stats = computeWeightedRate(centerLng, centerLat, markets, blendRadiusKm);
         const cellAreaSqft = approximateCellAreaSqft(centerLat, stepDegrees);
@@ -1426,6 +1504,10 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
   const pendingHoverPointerRef = useRef<HoverPointerState | null>(null);
   const hoverFrameRef = useRef<number | null>(null);
   const lastPopupHtmlRef = useRef<string>("");
+  // C6 — guards concurrent `updateGridSource` invocations so overlapping
+  // moveend/zoomend/market-change triggers do not interleave.
+  const gridUpdateInFlightRef = useRef<boolean>(false);
+  const pendingGridRebuildRef = useRef<boolean>(false);
   const [satelliteMode, setSatelliteMode] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
 
@@ -1480,8 +1562,8 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         center: [10, 25],
         zoom: 1.2,
         pitch: 36,
-        minZoom: 1,
-        maxZoom: 16,
+        minZoom: GRID_MIN_ZOOM,
+        maxZoom: SATELLITE_MAX_NATIVE_ZOOM,
         renderWorldCopies: false,
         attributionControl: false
       });
@@ -1504,7 +1586,6 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
     popupRef.current = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
-      className: "price-hover-popup",
       offset: [0, -86]
     });
 
@@ -1671,11 +1752,18 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
               : layer.level === 0.5
                 ? tierHeights.tier50
                 : tierHeights.tier25;
-        const nextFilter = layerIds.length > 0 ? (["in", ["get", "gridId"], ["literal", layerIds]] as any) : EMPTY_GRID_FILTER;
+        const nextFilter: FilterSpecification =
+          layerIds.length > 0
+            ? (["in", ["get", "gridId"], ["literal", layerIds]] as unknown as FilterSpecification)
+            : EMPTY_GRID_FILTER;
         const layerHeightExpression = buildHoverHeightExpression(layerHeights);
 
         map.setFilter(layer.id, nextFilter);
-        map.setPaintProperty(layer.id, "fill-extrusion-height", layerHeightExpression);
+        map.setPaintProperty(
+          layer.id,
+          "fill-extrusion-height",
+          layerHeightExpression as unknown as ExpressionSpecification
+        );
       }
     };
 
@@ -1727,53 +1815,114 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         return;
       }
 
-      const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
-      if (!gridSource) {
+      // C6 — guard against re-entrant invocations. If an update is already
+      // in-flight, mark a pending rebuild and bail. The finally block will
+      // reschedule once the current run completes.
+      if (gridUpdateInFlightRef.current) {
+        pendingGridRebuildRef.current = true;
         return;
       }
+      gridUpdateInFlightRef.current = true;
 
-      const zoom = map.getZoom();
-      const center = map.getCenter();
-      const stepDegrees = getGridStepDegrees(zoom);
-      if (shouldSkipGridRegeneration(zoom, center.lng, center.lat, stepDegrees)) {
-        return;
+      try {
+        const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
+        if (!gridSource) {
+          return;
+        }
+
+        const zoom = map.getZoom();
+        const center = map.getCenter();
+        const stepDegrees = getGridStepDegrees(zoom);
+        if (shouldSkipGridRegeneration(zoom, center.lng, center.lat, stepDegrees)) {
+          return;
+        }
+        const viewportHint = buildGridViewportHint(map, zoom);
+        const collection = createAdaptiveGridFeatureCollection(
+          map.getBounds(),
+          zoom,
+          landPolygonsRef.current,
+          landSpatialIndexRef.current,
+          latestMarketsRef.current,
+          latestPricePointsRef.current,
+          viewportHint
+        );
+
+        clearHoverLiftState();
+        lastHoverLiftSignatureRef.current = "";
+        const gridCells = extractGridCellsFromCollection(collection);
+        latestGridCellsRef.current = gridCells;
+
+        // H6 — compute diff vs previous cell map and update spatial index
+        // incrementally instead of rebuilding from scratch.
+        const previousCellById = gridCellByIdRef.current;
+        const nextCellById = new Map<string, GridCellMeta>();
+        for (const cell of gridCells) nextCellById.set(cell.id, cell);
+
+        const addedCells: GridCellMeta[] = [];
+        const removedIds = new Set<string>();
+        for (const cell of gridCells) {
+          if (!previousCellById.has(cell.id)) addedCells.push(cell);
+        }
+        for (const [id] of previousCellById) {
+          if (!nextCellById.has(id)) removedIds.add(id);
+        }
+
+        // C2 — viewport-based pruning. After the diff, drop any cached cells
+        // outside a 25% viewport buffer. Bounds-based eviction keeps the ref
+        // map bounded without needing an explicit size cap.
+        const bounds = map.getBounds();
+        const west = bounds.getWest();
+        const east = bounds.getEast();
+        const south = bounds.getSouth();
+        const north = bounds.getNorth();
+        const bufferLng = (east - west) * 0.25;
+        const bufferLat = (north - south) * 0.25;
+        const inViewport = (lng: number, lat: number): boolean =>
+          lng >= west - bufferLng &&
+          lng <= east + bufferLng &&
+          lat >= south - bufferLat &&
+          lat <= north + bufferLat;
+        for (const [id, cell] of nextCellById) {
+          if (!inViewport(cell.centerLng, cell.centerLat)) {
+            nextCellById.delete(id);
+            removedIds.add(id);
+          }
+        }
+
+        gridCellByIdRef.current = nextCellById;
+        gridSpatialIndexRef.current = updateGridSpatialIndex(
+          gridSpatialIndexRef.current,
+          removedIds,
+          addedCells
+        );
+        gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
+
+        gridSource.setData(collection);
+
+        if (hoverLiftTargetRef.current) {
+          scheduleHoverLiftUpdate({
+            ...hoverLiftTargetRef.current,
+            zoom
+          });
+        }
+
+        lastGridRenderSnapshotRef.current = {
+          centerLng: center.lng,
+          centerLat: center.lat,
+          zoom,
+          stepDegrees,
+          marketVersion: marketVersionRef.current,
+          viewportVersion: viewportVersionRef.current
+        };
+      } finally {
+        gridUpdateInFlightRef.current = false;
+        if (pendingGridRebuildRef.current) {
+          pendingGridRebuildRef.current = false;
+          // Reschedule via the debounce path to coalesce any further events
+          // that may have fired while the previous run was in progress.
+          scheduleGridUpdate();
+        }
       }
-      const viewportHint = buildGridViewportHint(map, zoom);
-      const collection = createAdaptiveGridFeatureCollection(
-        map.getBounds(),
-        zoom,
-        landPolygonsRef.current,
-        landSpatialIndexRef.current,
-        latestMarketsRef.current,
-        latestPricePointsRef.current,
-        viewportHint
-      );
-
-      clearHoverLiftState();
-      lastHoverLiftSignatureRef.current = "";
-      const gridCells = extractGridCellsFromCollection(collection);
-      latestGridCellsRef.current = gridCells;
-      gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
-      gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
-      gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
-
-      gridSource.setData(collection);
-
-      if (hoverLiftTargetRef.current) {
-        scheduleHoverLiftUpdate({
-          ...hoverLiftTargetRef.current,
-          zoom
-        });
-      }
-
-      lastGridRenderSnapshotRef.current = {
-        centerLng: center.lng,
-        centerLat: center.lat,
-        zoom,
-        stepDegrees,
-        marketVersion: marketVersionRef.current,
-        viewportVersion: viewportVersionRef.current
-      };
     };
 
     const queueGridFrame = () => {
@@ -1825,35 +1974,56 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       updateGridSource();
     };
 
+    const INIT_RETRY_DELAYS_MS = [500, 1000, 2000] as const;
+    const sleep = (ms: number) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+
+    const loadInitialDataOnce = async () => {
+      // Rely on standard HTTP cache semantics (ETag / Cache-Control) rather
+      // than `force-cache`, so refreshed geojson assets are picked up without
+      // a hard reload.
+      const [landResponse, cityResponse] = await Promise.all([
+        fetch(LANDMASS_GEOJSON_URL, { cache: "default" }),
+        fetch(MAJOR_CITIES_GEOJSON_URL, { cache: "default" })
+      ]);
+
+      if (!landResponse.ok) {
+        throw new Error(`Unable to load land geometry (${landResponse.status})`);
+      }
+      if (!cityResponse.ok) {
+        throw new Error(`Unable to load city labels (${cityResponse.status})`);
+      }
+
+      const landPayload = (await landResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
+      const cityPayload = (await cityResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
+
+      landPolygonsRef.current = extractLandPolygons(landPayload);
+      landSpatialIndexRef.current = buildLandSpatialIndex(landPolygonsRef.current);
+      majorCitiesRef.current = extractMajorCities(cityPayload);
+      const oceanMaskSource = map.getSource("ocean-mask") as GeoJSONSource | undefined;
+      if (oceanMaskSource) {
+        oceanMaskSource.setData(createOceanMaskFeatureCollection(landPolygonsRef.current));
+      }
+      flushGridUpdate();
+    };
+
     const initializeData = async () => {
-      try {
-        const [landResponse, cityResponse] = await Promise.all([
-          fetch(LANDMASS_GEOJSON_URL, { cache: "force-cache" }),
-          fetch(MAJOR_CITIES_GEOJSON_URL, { cache: "force-cache" })
-        ]);
-
-        if (!landResponse.ok) {
-          throw new Error(`Unable to load land geometry (${landResponse.status})`);
+      // Retry with exponential backoff. Clears the error state on success so
+      // a failed-then-recovered load does not leave a stale banner behind.
+      for (let attempt = 0; attempt < INIT_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          await loadInitialDataOnce();
+          setMapError(null);
+          return;
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error("[globe-canvas] init failure attempt=" + (attempt + 1), error instanceof Error ? error.message : error);
+          if (attempt === INIT_RETRY_DELAYS_MS.length - 1) {
+            const message = error instanceof Error ? error.message : "Failed to initialize grid data";
+            setMapError(message);
+            return;
+          }
+          await sleep(INIT_RETRY_DELAYS_MS[attempt] ?? 1000);
         }
-
-        if (!cityResponse.ok) {
-          throw new Error(`Unable to load city labels (${cityResponse.status})`);
-        }
-
-        const landPayload = (await landResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
-        const cityPayload = (await cityResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
-
-        landPolygonsRef.current = extractLandPolygons(landPayload);
-        landSpatialIndexRef.current = buildLandSpatialIndex(landPolygonsRef.current);
-        majorCitiesRef.current = extractMajorCities(cityPayload);
-        const oceanMaskSource = map.getSource("ocean-mask") as GeoJSONSource | undefined;
-        if (oceanMaskSource) {
-          oceanMaskSource.setData(createOceanMaskFeatureCollection(landPolygonsRef.current));
-        }
-        flushGridUpdate();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to initialize grid data";
-        setMapError(message);
       }
     };
 
@@ -1865,22 +2035,25 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
       map.addSource("satellite-imagery", {
         type: "raster",
-        tiles: [SATELLITE_TILE_URL],
+        tiles: SATELLITE_TILE_URLS,
         tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM,
         attribution: SATELLITE_ATTRIBUTION
       });
 
       map.addSource("satellite-reference-labels", {
         type: "raster",
-        tiles: [SATELLITE_LABELS_TILE_URL],
+        tiles: SATELLITE_LABELS_TILE_URLS,
         tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM,
         attribution: SATELLITE_REFERENCE_ATTRIBUTION
       });
 
       map.addSource("satellite-reference-roads", {
         type: "raster",
-        tiles: [SATELLITE_ROADS_TILE_URL],
-        tileSize: 256
+        tiles: SATELLITE_ROADS_TILE_URLS,
+        tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM
       });
 
       map.addLayer({
@@ -1977,51 +2150,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         data: emptyOceanMaskCollection
       });
 
-      for (const layer of HOVER_EXTRUSION_LAYERS) {
-        map.addLayer({
-          id: layer.id,
-          type: "fill-extrusion",
-          source: "land-grid",
-          filter: EMPTY_GRID_FILTER,
-          paint: {
-            "fill-extrusion-color": HOVER_RATE_COLOR_EXPRESSION,
-            "fill-extrusion-base": 0,
-            "fill-extrusion-height": 0,
-            "fill-extrusion-opacity": 1,
-            "fill-extrusion-base-transition": {
-              duration: 36,
-              delay: 0
-            },
-            "fill-extrusion-height-transition": {
-              duration: 36,
-              delay: 0
-            }
-          }
-        });
-      }
-
-      map.addLayer({
-        id: "land-grid-line",
-        type: "line",
-        source: "land-grid",
-        paint: {
-          "line-color": "rgba(3, 19, 39, 0.85)",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.12, 7, 0.35, 12, 0.72, 16, 1.05],
-          "line-opacity": 0
-        }
-      });
-
-      map.addLayer({
-        id: "land-grid-hover",
-        type: "line",
-        source: "land-grid",
-        filter: ["==", ["get", "gridId"], ""],
-        paint: {
-          "line-color": "#f8fafc",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.7, 8, 1.3, 12, 2],
-          "line-opacity": 0.95
-        }
-      });
+      // Heatmap fill-extrusion layers removed — replaced by DotGrid overlay
 
       map.addLayer({
         id: "ocean-mask-fill",
@@ -2207,13 +2336,30 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           ? `${nearestCity.name}${nearestCity.country ? `, ${nearestCity.country}` : ""} (${nearestCity.distanceKm.toFixed(0)} km)`
           : "Unknown";
 
-        let popupHtml = "";
+        // H5 — build popup content as DOM nodes with textContent so all data
+        // fields are automatically escaped. `setDOMContent` replaces the
+        // previous string-concatenated HTML path and removes the XSS vector.
+        // We still use `popupSignature` to skip identical renders.
+        let popupSignature = "";
+        let popupContent: HTMLElement;
+        const rootStyle = "font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;";
+
         if (!hasGridCell) {
-          popupHtml =
-            `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
-              `<strong style="display:block; margin-bottom:4px;">Nearest city: ${nearestCityLabel}</strong>` +
-              `<span style="color:#94a3b8;">No land grid cell under cursor at this location.</span>` +
-              `</div>`;
+          popupSignature = `nocell:${nearestCityLabel}`;
+          const root = document.createElement("div");
+          root.setAttribute("style", rootStyle);
+
+          const heading = document.createElement("strong");
+          heading.setAttribute("style", "display:block; margin-bottom:4px;");
+          heading.textContent = `Nearest city: ${nearestCityLabel}`;
+          root.appendChild(heading);
+
+          const note = document.createElement("span");
+          note.setAttribute("style", "color:#94a3b8;");
+          note.textContent = "No land grid cell under cursor at this location.";
+          root.appendChild(note);
+
+          popupContent = root;
         } else {
           const avgPriceUsdPerSqft = Number(activeCell?.avgPricePerSqft ?? 0);
           const contributorCount = Number(activeCell?.contributorCount ?? 0);
@@ -2225,30 +2371,67 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           const rateConfidence = activeCell?.rateConfidence ?? "inferred";
           const selectedCurrency = selectedMarketCurrencyRef.current;
           const avgPriceLocalPerSqft = fromUsd(avgPriceUsdPerSqft, selectedCurrency);
-          const sourceLabel = nearestPointSource === "listing_observation" ? "Nearest observed parcel" : "Nearest market benchmark";
+          const sourceLabel =
+            nearestPointSource === "listing_observation"
+              ? "Nearest observed parcel"
+              : "Nearest market benchmark";
           const basisLabel =
             rateConfidence === "local"
               ? "Local observations"
               : rateConfidence === "regional"
                 ? "Regional interpolation"
                 : "Long-range interpolation";
-          popupHtml =
-            `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
-              `<strong style="display:block; margin-bottom:4px;">Nearest city: ${nearestCityLabel}</strong>` +
-              `<span style="color:#cbd5e1;">Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft</span><br/>` +
-              `<span style="color:#94a3b8;">USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft</span><br/>` +
-              `<span style="color:#94a3b8;">Basis: ${basisLabel}</span><br/>` +
-              `<span style="color:#94a3b8;">${sourceLabel}: ${nearestPointLabel || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)</span><br/>` +
-              `<span style="color:#cbd5e1;">Contributors: ${contributorCount}</span><br/>` +
-              `<span style="color:#94a3b8;">Grid step: ${stepDegrees.toFixed(5)} deg</span><br/>` +
-              `<span style="color:#94a3b8;">Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft</span>` +
-              `</div>`;
+
+          popupSignature =
+            `cell:${activeCell?.id ?? ""}:${avgPriceUsdPerSqft.toFixed(2)}:${selectedCurrency}:` +
+            `${contributorCount}:${nearestCityLabel}:${rateConfidence}`;
+
+          const root = document.createElement("div");
+          root.setAttribute("style", rootStyle);
+
+          const addLine = (text: string, color: string, asBlock = false) => {
+            const span = document.createElement("span");
+            span.setAttribute("style", `color:${color};`);
+            span.textContent = text;
+            root.appendChild(span);
+            if (asBlock) root.appendChild(document.createElement("br"));
+          };
+
+          const heading = document.createElement("strong");
+          heading.setAttribute("style", "display:block; margin-bottom:4px;");
+          heading.textContent = `Nearest city: ${nearestCityLabel}`;
+          root.appendChild(heading);
+
+          addLine(
+            `Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft`,
+            "#cbd5e1",
+            true
+          );
+          addLine(
+            `USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft`,
+            "#94a3b8",
+            true
+          );
+          addLine(`Basis: ${basisLabel}`, "#94a3b8", true);
+          addLine(
+            `${sourceLabel}: ${nearestPointLabel || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)`,
+            "#94a3b8",
+            true
+          );
+          addLine(`Contributors: ${contributorCount}`, "#cbd5e1", true);
+          addLine(`Grid step: ${stepDegrees.toFixed(5)} deg`, "#94a3b8", true);
+          addLine(
+            `Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft`,
+            "#94a3b8"
+          );
+
+          popupContent = root;
         }
 
         popup.setLngLat([pointer.lng, pointer.lat]);
-        if (popupHtml !== lastPopupHtmlRef.current) {
-          popup.setHTML(popupHtml);
-          lastPopupHtmlRef.current = popupHtml;
+        if (popupSignature !== lastPopupHtmlRef.current) {
+          popup.setDOMContent(popupContent);
+          lastPopupHtmlRef.current = popupSignature;
         }
         if (!popup.isOpen()) {
           popup.addTo(map);
@@ -2400,6 +2583,57 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       const marketSource = map.getSource("markets") as GeoJSONSource | undefined;
       marketSource?.setData(marketFeatureCollection);
 
+      // Suppress duplicate world-city labels where a market label already
+      // renders the same place. Previously "Dubai" appeared twice at low zoom
+      // because both place-labels-major and market-labels collision-avoided
+      // each other via variable anchors. Now we filter the major-city layer
+      // to exclude any name that matches a market.
+      const marketNameSet = new Set<string>();
+      for (const market of markets) {
+        marketNameSet.add(market.name);
+      }
+      const marketNameList = Array.from(marketNameSet);
+      const placeLabelExclusion: ExpressionSpecification = [
+        "!",
+        [
+          "in",
+          ["coalesce", ["get", "nameascii"], ["get", "name"], ""],
+          ["literal", marketNameList]
+        ]
+      ];
+      const placeLabelFilters: Array<[string, FilterSpecification]> = [
+        [
+          "place-labels-major",
+          [
+            "all",
+            ["<=", ["coalesce", ["get", "min_zoom"], 7], 3.7],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ],
+        [
+          "place-labels-regional",
+          [
+            "all",
+            [">", ["coalesce", ["get", "min_zoom"], 7], 3.7],
+            ["<=", ["coalesce", ["get", "min_zoom"], 7], 5.6],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ],
+        [
+          "place-labels-local",
+          [
+            "all",
+            [">", ["coalesce", ["get", "min_zoom"], 7], 5.6],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ]
+      ];
+      for (const [layerId, filter] of placeLabelFilters) {
+        if (map.getLayer(layerId)) {
+          map.setFilter(layerId, filter);
+        }
+      }
+
       const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
       if (gridSource && landPolygonsRef.current.length > 0) {
         const zoom = map.getZoom();
@@ -2415,8 +2649,47 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         );
         const gridCells = extractGridCellsFromCollection(collection);
         latestGridCellsRef.current = gridCells;
-        gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
-        gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
+
+        // Incremental index update + viewport pruning, same as the
+        // updateGridSource path.
+        const previousCellById = gridCellByIdRef.current;
+        const nextCellById = new Map<string, GridCellMeta>();
+        for (const cell of gridCells) nextCellById.set(cell.id, cell);
+
+        const addedCells: GridCellMeta[] = [];
+        const removedIds = new Set<string>();
+        for (const cell of gridCells) {
+          if (!previousCellById.has(cell.id)) addedCells.push(cell);
+        }
+        for (const [id] of previousCellById) {
+          if (!nextCellById.has(id)) removedIds.add(id);
+        }
+
+        const bounds = map.getBounds();
+        const west = bounds.getWest();
+        const east = bounds.getEast();
+        const south = bounds.getSouth();
+        const north = bounds.getNorth();
+        const bufferLng = (east - west) * 0.25;
+        const bufferLat = (north - south) * 0.25;
+        const inViewport = (lng: number, lat: number): boolean =>
+          lng >= west - bufferLng &&
+          lng <= east + bufferLng &&
+          lat >= south - bufferLat &&
+          lat <= north + bufferLat;
+        for (const [id, cell] of nextCellById) {
+          if (!inViewport(cell.centerLng, cell.centerLat)) {
+            nextCellById.delete(id);
+            removedIds.add(id);
+          }
+        }
+
+        gridCellByIdRef.current = nextCellById;
+        gridSpatialIndexRef.current = updateGridSpatialIndex(
+          gridSpatialIndexRef.current,
+          removedIds,
+          addedCells
+        );
         gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
 
         hoverLiftTargetRef.current = null;
@@ -2475,23 +2748,35 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         onClick={() => setSatelliteMode((current) => !current)}
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
+          bottom: 16,
+          left: 16,
           zIndex: 4,
-          border: "1px solid rgba(148, 163, 184, 0.55)",
-          borderRadius: 10,
-          padding: "7px 12px",
-          fontSize: 12,
-          fontWeight: 600,
-          letterSpacing: "0.01em",
-          color: "#f8fafc",
-          background: satelliteMode ? "rgba(15, 23, 42, 0.9)" : "rgba(2, 6, 23, 0.84)",
-          backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          borderRadius: 8,
+          padding: "6px 10px",
+          fontSize: 11,
+          fontWeight: 500,
+          letterSpacing: "0.02em",
+          color: "rgba(248,250,252,0.85)",
+          background: "rgba(10, 10, 15, 0.82)",
+          backdropFilter: "blur(12px)",
           cursor: "pointer",
-          boxShadow: "0 8px 18px rgba(2, 6, 23, 0.35)"
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          transition: "all 150ms ease"
         }}
+        aria-label={satelliteMode ? "Switch to map mode" : "Switch to satellite mode"}
       >
-        {satelliteMode ? "Map Mode" : "Satellite Mode"}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+          {satelliteMode ? (
+            <>{/* Map icon */}<rect x="1" y="1" width="12" height="12" rx="2" /><path d="M1 5l4 3 3-2 5 4" /><circle cx="10" cy="3.5" r="1.2" fill="currentColor" /></>
+          ) : (
+            <>{/* Satellite icon */}<circle cx="7" cy="7" r="5.5" /><path d="M7 1.5v11" /><path d="M1.5 7h11" /><path d="M2 4c1.5.5 3.5.8 5 .8s3.5-.3 5-.8" /><path d="M2 10c1.5-.5 3.5-.8 5-.8s3.5.3 5 .8" /></>
+          )}
+        </svg>
+        {satelliteMode ? "Map" : "Satellite"}
       </button>
       {mapError ? (
         <div

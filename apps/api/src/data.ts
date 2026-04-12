@@ -10,10 +10,33 @@ import type {
 
 const now = new Date();
 
-const daysAgo = (days: number): string => {
-  const value = new Date(now);
-  value.setUTCDate(value.getUTCDate() - days);
-  return value.toISOString();
+/**
+ * Returns an ISO-8601 timestamp `days` ago. When a `timezone` is provided the
+ * day-boundary is computed in that zone (so "1 day ago" for a Tokyo market
+ * reflects Tokyo's yesterday, not UTC's), then serialised back to UTC for the
+ * wire format. Defaults to UTC so legacy call sites are unchanged.
+ */
+const daysAgo = (days: number, timezone: string = "UTC"): string => {
+  // Use en-CA for YYYY-MM-DD output so parsing is unambiguous.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+  const [yearStr, monthStr, dayStr] = parts.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    // Fallback to UTC math if the Intl result is unexpected (defensive).
+    const fallback = new Date(now);
+    fallback.setUTCDate(fallback.getUTCDate() - days);
+    return fallback.toISOString();
+  }
+  const anchor = new Date(Date.UTC(year, month - 1, day));
+  anchor.setUTCDate(anchor.getUTCDate() - days);
+  return anchor.toISOString();
 };
 
 export const markets: MarketDto[] = [
@@ -33,7 +56,10 @@ export const markets: MarketDto[] = [
     closedTransactions: 534,
     benchmarkPricePerSqm: 2950,
     benchmarkCurrency: "AED",
-    updatedAt: daysAgo(1)
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 7.4,
+    avgDaysOnMarket: 38,
+    populationM: 3.6
   },
   {
     id: "m-london",
@@ -51,7 +77,10 @@ export const markets: MarketDto[] = [
     closedTransactions: 402,
     benchmarkPricePerSqm: 4200,
     benchmarkCurrency: "GBP",
-    updatedAt: daysAgo(1)
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 2.1,
+    avgDaysOnMarket: 55,
+    populationM: 9.0
   },
   {
     id: "m-singapore",
@@ -69,7 +98,10 @@ export const markets: MarketDto[] = [
     closedTransactions: 287,
     benchmarkPricePerSqm: 6100,
     benchmarkCurrency: "SGD",
-    updatedAt: daysAgo(0)
+    updatedAt: daysAgo(0),
+    priceChangeYoy: 5.8,
+    avgDaysOnMarket: 29,
+    populationM: 5.9
   },
   {
     id: "m-sao-paulo",
@@ -87,7 +119,10 @@ export const markets: MarketDto[] = [
     closedTransactions: 129,
     benchmarkPricePerSqm: 1450,
     benchmarkCurrency: "BRL",
-    updatedAt: daysAgo(5)
+    updatedAt: daysAgo(5),
+    priceChangeYoy: -1.2,
+    avgDaysOnMarket: 90,
+    populationM: 12.3
   },
   {
     id: "m-lagos",
@@ -105,7 +140,10 @@ export const markets: MarketDto[] = [
     closedTransactions: 72,
     benchmarkPricePerSqm: 820000,
     benchmarkCurrency: "NGN",
-    updatedAt: daysAgo(6)
+    updatedAt: daysAgo(6),
+    priceChangeYoy: 11.4,
+    avgDaysOnMarket: 120,
+    populationM: 15.4
   },
   {
     id: "m-texas-triangle",
@@ -123,7 +161,514 @@ export const markets: MarketDto[] = [
     closedTransactions: 510,
     benchmarkPricePerSqm: 540,
     benchmarkCurrency: "USD",
-    updatedAt: daysAgo(2)
+    updatedAt: daysAgo(2),
+    priceChangeYoy: 3.6,
+    avgDaysOnMarket: 41,
+    populationM: 9.8
+  },
+  {
+    id: "m-new-york",
+    slug: "new-york-metro-us",
+    name: "New York Metro",
+    countryCode: "US",
+    region: "North America",
+    timezone: "America/New_York",
+    center: { lng: -74.006, lat: 40.7128 },
+    coverageTier: "tier_c_parcel_depth",
+    freshness: "realtime",
+    confidence: "verified",
+    activityScore: 91,
+    activeListings: 2847,
+    closedTransactions: 1102,
+    benchmarkPricePerSqm: 6800,
+    benchmarkCurrency: "USD",
+    updatedAt: daysAgo(0),
+    priceChangeYoy: 1.8,
+    avgDaysOnMarket: 62,
+    populationM: 8.3
+  },
+  {
+    id: "m-miami",
+    slug: "miami-us",
+    name: "Miami",
+    countryCode: "US",
+    region: "North America",
+    timezone: "America/New_York",
+    center: { lng: -80.1918, lat: 25.7617 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 77,
+    activeListings: 1563,
+    closedTransactions: 618,
+    benchmarkPricePerSqm: 4100,
+    benchmarkCurrency: "USD",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 6.2,
+    avgDaysOnMarket: 44,
+    populationM: 0.45
+  },
+  {
+    id: "m-toronto",
+    slug: "toronto-ca",
+    name: "Toronto",
+    countryCode: "CA",
+    region: "North America",
+    timezone: "America/Toronto",
+    center: { lng: -79.3832, lat: 43.6532 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 75,
+    activeListings: 1094,
+    closedTransactions: 447,
+    benchmarkPricePerSqm: 3200,
+    benchmarkCurrency: "CAD",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: -0.8,
+    avgDaysOnMarket: 51,
+    populationM: 2.9
+  },
+  {
+    id: "m-paris",
+    slug: "paris-fr",
+    name: "Paris",
+    countryCode: "FR",
+    region: "Europe",
+    timezone: "Europe/Paris",
+    center: { lng: 2.3522, lat: 48.8566 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 82,
+    activeListings: 1341,
+    closedTransactions: 521,
+    benchmarkPricePerSqm: 9500,
+    benchmarkCurrency: "EUR",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 0.4,
+    avgDaysOnMarket: 68,
+    populationM: 2.1
+  },
+  {
+    id: "m-berlin",
+    slug: "berlin-de",
+    name: "Berlin",
+    countryCode: "DE",
+    region: "Europe",
+    timezone: "Europe/Berlin",
+    center: { lng: 13.405, lat: 52.52 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 73,
+    activeListings: 876,
+    closedTransactions: 334,
+    benchmarkPricePerSqm: 4800,
+    benchmarkCurrency: "EUR",
+    updatedAt: daysAgo(2),
+    priceChangeYoy: -2.3,
+    avgDaysOnMarket: 72,
+    populationM: 3.7
+  },
+  {
+    id: "m-amsterdam",
+    slug: "amsterdam-nl",
+    name: "Amsterdam",
+    countryCode: "NL",
+    region: "Europe",
+    timezone: "Europe/Amsterdam",
+    center: { lng: 4.9041, lat: 52.3676 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 70,
+    activeListings: 612,
+    closedTransactions: 248,
+    benchmarkPricePerSqm: 6200,
+    benchmarkCurrency: "EUR",
+    updatedAt: daysAgo(4),
+    priceChangeYoy: 3.9,
+    avgDaysOnMarket: 59,
+    populationM: 0.9
+  },
+  {
+    id: "m-sydney",
+    slug: "sydney-au",
+    name: "Sydney",
+    countryCode: "AU",
+    region: "Asia-Pacific",
+    timezone: "Australia/Sydney",
+    center: { lng: 151.2093, lat: -33.8688 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 78,
+    activeListings: 1087,
+    closedTransactions: 413,
+    benchmarkPricePerSqm: 5100,
+    benchmarkCurrency: "AUD",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 4.7,
+    avgDaysOnMarket: 33,
+    populationM: 5.3
+  },
+  {
+    id: "m-tokyo",
+    slug: "tokyo-jp",
+    name: "Tokyo",
+    countryCode: "JP",
+    region: "Asia-Pacific",
+    timezone: "Asia/Tokyo",
+    center: { lng: 139.6917, lat: 35.6895 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 86,
+    activeListings: 1928,
+    closedTransactions: 774,
+    benchmarkPricePerSqm: 820000,
+    benchmarkCurrency: "JPY",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 2.9,
+    avgDaysOnMarket: 48,
+    populationM: 13.9
+  },
+  {
+    id: "m-hong-kong",
+    slug: "hong-kong-hk",
+    name: "Hong Kong",
+    countryCode: "HK",
+    region: "Asia-Pacific",
+    timezone: "Asia/Hong_Kong",
+    center: { lng: 114.1694, lat: 22.3193 },
+    coverageTier: "tier_c_parcel_depth",
+    freshness: "daily",
+    confidence: "verified",
+    activityScore: 85,
+    activeListings: 1644,
+    closedTransactions: 659,
+    benchmarkPricePerSqm: 28000,
+    benchmarkCurrency: "HKD",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: -4.1,
+    avgDaysOnMarket: 55,
+    populationM: 7.4
+  },
+  {
+    id: "m-mumbai",
+    slug: "mumbai-in",
+    name: "Mumbai",
+    countryCode: "IN",
+    region: "Asia-Pacific",
+    timezone: "Asia/Kolkata",
+    center: { lng: 72.8777, lat: 19.076 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 67,
+    activeListings: 743,
+    closedTransactions: 201,
+    benchmarkPricePerSqm: 95000,
+    benchmarkCurrency: "INR",
+    updatedAt: daysAgo(5),
+    priceChangeYoy: 8.3,
+    avgDaysOnMarket: 95,
+    populationM: 20.7
+  },
+  {
+    id: "m-riyadh",
+    slug: "riyadh-sa",
+    name: "Riyadh",
+    countryCode: "SA",
+    region: "Middle East",
+    timezone: "Asia/Riyadh",
+    center: { lng: 46.7219, lat: 24.6877 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 72,
+    activeListings: 891,
+    closedTransactions: 276,
+    benchmarkPricePerSqm: 1850,
+    benchmarkCurrency: "SAR",
+    updatedAt: daysAgo(4),
+    priceChangeYoy: 12.6,
+    avgDaysOnMarket: 61,
+    populationM: 7.5
+  },
+  {
+    id: "m-istanbul",
+    slug: "istanbul-tr",
+    name: "Istanbul",
+    countryCode: "TR",
+    region: "Europe",
+    timezone: "Europe/Istanbul",
+    center: { lng: 28.9784, lat: 41.0082 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 69,
+    activeListings: 658,
+    closedTransactions: 183,
+    benchmarkPricePerSqm: 42000,
+    benchmarkCurrency: "TRY",
+    updatedAt: daysAgo(6),
+    priceChangeYoy: 18.4,
+    avgDaysOnMarket: 77,
+    populationM: 15.5
+  },
+  {
+    id: "m-johannesburg",
+    slug: "johannesburg-za",
+    name: "Johannesburg",
+    countryCode: "ZA",
+    region: "Africa",
+    timezone: "Africa/Johannesburg",
+    center: { lng: 28.0473, lat: -26.2041 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "low",
+    activityScore: 61,
+    activeListings: 429,
+    closedTransactions: 98,
+    benchmarkPricePerSqm: 7200,
+    benchmarkCurrency: "ZAR",
+    updatedAt: daysAgo(7),
+    priceChangeYoy: 3.2,
+    avgDaysOnMarket: 88,
+    populationM: 5.6
+  },
+  {
+    id: "m-mexico-city",
+    slug: "mexico-city-mx",
+    name: "Mexico City",
+    countryCode: "MX",
+    region: "Latin America",
+    timezone: "America/Mexico_City",
+    center: { lng: -99.1332, lat: 19.4326 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 65,
+    activeListings: 517,
+    closedTransactions: 141,
+    benchmarkPricePerSqm: 38000,
+    benchmarkCurrency: "MXN",
+    updatedAt: daysAgo(5),
+    priceChangeYoy: 6.1,
+    avgDaysOnMarket: 83,
+    populationM: 9.2
+  },
+  {
+    id: "m-los-angeles",
+    slug: "los-angeles-us",
+    name: "Los Angeles",
+    countryCode: "US",
+    region: "North America",
+    timezone: "America/Los_Angeles",
+    center: { lng: -118.2437, lat: 34.0522 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 80,
+    activeListings: 1876,
+    closedTransactions: 712,
+    benchmarkPricePerSqm: 5200,
+    benchmarkCurrency: "USD",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 3.1,
+    avgDaysOnMarket: 47,
+    populationM: 4.0
+  },
+  {
+    id: "m-chicago",
+    slug: "chicago-us",
+    name: "Chicago",
+    countryCode: "US",
+    region: "North America",
+    timezone: "America/Chicago",
+    center: { lng: -87.6298, lat: 41.8781 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 71,
+    activeListings: 1143,
+    closedTransactions: 463,
+    benchmarkPricePerSqm: 2600,
+    benchmarkCurrency: "USD",
+    updatedAt: daysAgo(2),
+    priceChangeYoy: 1.4,
+    avgDaysOnMarket: 58,
+    populationM: 2.7
+  },
+  {
+    id: "m-seoul",
+    slug: "seoul-kr",
+    name: "Seoul",
+    countryCode: "KR",
+    region: "Asia-Pacific",
+    timezone: "Asia/Seoul",
+    center: { lng: 126.978, lat: 37.5665 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 83,
+    activeListings: 1592,
+    closedTransactions: 631,
+    benchmarkPricePerSqm: 6500000,
+    benchmarkCurrency: "KRW",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 4.8,
+    avgDaysOnMarket: 36,
+    populationM: 9.7
+  },
+  {
+    id: "m-shanghai",
+    slug: "shanghai-cn",
+    name: "Shanghai",
+    countryCode: "CN",
+    region: "Asia-Pacific",
+    timezone: "Asia/Shanghai",
+    center: { lng: 121.4737, lat: 31.2304 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 87,
+    activeListings: 2214,
+    closedTransactions: 889,
+    benchmarkPricePerSqm: 62000,
+    benchmarkCurrency: "CNY",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 2.2,
+    avgDaysOnMarket: 42,
+    populationM: 24.9
+  },
+  {
+    id: "m-bangkok",
+    slug: "bangkok-th",
+    name: "Bangkok",
+    countryCode: "TH",
+    region: "Asia-Pacific",
+    timezone: "Asia/Bangkok",
+    center: { lng: 100.5018, lat: 13.7563 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "medium",
+    activityScore: 66,
+    activeListings: 748,
+    closedTransactions: 214,
+    benchmarkPricePerSqm: 115000,
+    benchmarkCurrency: "THB",
+    updatedAt: daysAgo(5),
+    priceChangeYoy: 5.4,
+    avgDaysOnMarket: 71,
+    populationM: 10.5
+  },
+  {
+    id: "m-madrid",
+    slug: "madrid-es",
+    name: "Madrid",
+    countryCode: "ES",
+    region: "Europe",
+    timezone: "Europe/Madrid",
+    center: { lng: -3.7038, lat: 40.4168 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 74,
+    activeListings: 1021,
+    closedTransactions: 388,
+    benchmarkPricePerSqm: 3900,
+    benchmarkCurrency: "EUR",
+    updatedAt: daysAgo(2),
+    priceChangeYoy: 7.8,
+    avgDaysOnMarket: 49,
+    populationM: 3.2
+  },
+  {
+    id: "m-zurich",
+    slug: "zurich-ch",
+    name: "Zurich",
+    countryCode: "CH",
+    region: "Europe",
+    timezone: "Europe/Zurich",
+    center: { lng: 8.5417, lat: 47.3769 },
+    coverageTier: "tier_b_market_depth",
+    freshness: "daily",
+    confidence: "high",
+    activityScore: 76,
+    activeListings: 584,
+    closedTransactions: 231,
+    benchmarkPricePerSqm: 13500,
+    benchmarkCurrency: "CHF",
+    updatedAt: daysAgo(1),
+    priceChangeYoy: 1.9,
+    avgDaysOnMarket: 44,
+    populationM: 0.43
+  },
+  {
+    id: "m-nairobi",
+    slug: "nairobi-ke",
+    name: "Nairobi",
+    countryCode: "KE",
+    region: "Africa",
+    timezone: "Africa/Nairobi",
+    center: { lng: 36.8219, lat: -1.2921 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "low",
+    activityScore: 59,
+    activeListings: 388,
+    closedTransactions: 84,
+    benchmarkPricePerSqm: 85000,
+    benchmarkCurrency: "KES",
+    updatedAt: daysAgo(7),
+    priceChangeYoy: 9.2,
+    avgDaysOnMarket: 110,
+    populationM: 4.4
+  },
+  {
+    id: "m-cairo",
+    slug: "cairo-eg",
+    name: "Cairo",
+    countryCode: "EG",
+    region: "Africa",
+    timezone: "Africa/Cairo",
+    center: { lng: 31.2357, lat: 30.0444 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "low",
+    activityScore: 62,
+    activeListings: 441,
+    closedTransactions: 103,
+    benchmarkPricePerSqm: 42000,
+    benchmarkCurrency: "EGP",
+    updatedAt: daysAgo(6),
+    priceChangeYoy: 22.1,
+    avgDaysOnMarket: 98,
+    populationM: 10.1
+  },
+  {
+    id: "m-buenos-aires",
+    slug: "buenos-aires-ar",
+    name: "Buenos Aires",
+    countryCode: "AR",
+    region: "Latin America",
+    timezone: "America/Argentina/Buenos_Aires",
+    center: { lng: -58.3816, lat: -34.6037 },
+    coverageTier: "tier_a_global_visibility",
+    freshness: "weekly",
+    confidence: "low",
+    activityScore: 60,
+    activeListings: 394,
+    closedTransactions: 91,
+    benchmarkPricePerSqm: 180000,
+    benchmarkCurrency: "ARS",
+    updatedAt: daysAgo(7),
+    priceChangeYoy: 31.4,
+    avgDaysOnMarket: 105,
+    populationM: 3.1
   }
 ];
 
@@ -466,7 +1011,34 @@ export const listings: ListingDto[] = [
     brokerName: null,
     freshness: "weekly",
     confidence: "high"
-  }
+  },
+  // ── Additional markets — one representative listing each ───────────────
+  { id: "l-2001", reference: "NYC-ASK-2001", marketId: "m-new-york", parcelId: null, state: "ask", amount: 18500000, currencyCode: "USD", observedAt: daysAgo(3), sourceName: "NYC ACRIS", brokerName: "Corcoran Group", freshness: "daily", confidence: "high" },
+  { id: "l-2002", reference: "MIA-CLO-2002", marketId: "m-miami", parcelId: null, state: "closed", amount: 6200000, currencyCode: "USD", observedAt: daysAgo(5), sourceName: "Miami-Dade Records", brokerName: null, freshness: "daily", confidence: "verified" },
+  { id: "l-2003", reference: "TOR-ASK-2003", marketId: "m-toronto", parcelId: null, state: "ask", amount: 9800000, currencyCode: "CAD", observedAt: daysAgo(2), sourceName: "TREB", brokerName: "Sotheby's Canada", freshness: "daily", confidence: "high" },
+  { id: "l-2004", reference: "PAR-EST-2004", marketId: "m-paris", parcelId: null, state: "estimate", amount: 7400000, currencyCode: "EUR", observedAt: daysAgo(4), sourceName: "Notaires de Paris", brokerName: "Barnes International", freshness: "weekly", confidence: "medium" },
+  { id: "l-2005", reference: "BER-ASK-2005", marketId: "m-berlin", parcelId: null, state: "ask", amount: 3100000, currencyCode: "EUR", observedAt: daysAgo(6), sourceName: "Grundbuch", brokerName: "Engel & Völkers", freshness: "weekly", confidence: "high" },
+  { id: "l-2006", reference: "AMS-CLO-2006", marketId: "m-amsterdam", parcelId: null, state: "closed", amount: 2800000, currencyCode: "EUR", observedAt: daysAgo(8), sourceName: "Kadaster", brokerName: null, freshness: "weekly", confidence: "verified" },
+  { id: "l-2007", reference: "SYD-ASK-2007", marketId: "m-sydney", parcelId: null, state: "ask", amount: 4600000, currencyCode: "AUD", observedAt: daysAgo(1), sourceName: "NSW LRS", brokerName: "Ray White", freshness: "daily", confidence: "high" },
+  { id: "l-2008", reference: "TYO-EST-2008", marketId: "m-tokyo", parcelId: null, state: "estimate", amount: 580000000, currencyCode: "JPY", observedAt: daysAgo(7), sourceName: "MLIT Japan", brokerName: "Mitsui Fudosan", freshness: "weekly", confidence: "medium" },
+  { id: "l-2009", reference: "HKG-ASK-2009", marketId: "m-hong-kong", parcelId: null, state: "ask", amount: 38000000, currencyCode: "HKD", observedAt: daysAgo(2), sourceName: "HKEX Land Reg.", brokerName: "JLL HK", freshness: "daily", confidence: "high" },
+  { id: "l-2010", reference: "BOM-ASK-2010", marketId: "m-mumbai", parcelId: null, state: "ask", amount: 95000000, currencyCode: "INR", observedAt: daysAgo(3), sourceName: "MahaRERA", brokerName: "Knight Frank India", freshness: "daily", confidence: "high" },
+  { id: "l-2011", reference: "RUH-CLO-2011", marketId: "m-riyadh", parcelId: null, state: "closed", amount: 14000000, currencyCode: "SAR", observedAt: daysAgo(4), sourceName: "Wathiq KSA", brokerName: null, freshness: "daily", confidence: "verified" },
+  { id: "l-2012", reference: "IST-ASK-2012", marketId: "m-istanbul", parcelId: null, state: "ask", amount: 12500000, currencyCode: "TRY", observedAt: daysAgo(5), sourceName: "Tapu Kadastro", brokerName: "RE/MAX Türkiye", freshness: "weekly", confidence: "high" },
+  { id: "l-2013", reference: "JNB-EST-2013", marketId: "m-johannesburg", parcelId: null, state: "estimate", amount: 8200000, currencyCode: "ZAR", observedAt: daysAgo(9), sourceName: "Deeds Office SA", brokerName: "Pam Golding", freshness: "weekly", confidence: "medium" },
+  { id: "l-2014", reference: "MEX-ASK-2014", marketId: "m-mexico-city", parcelId: null, state: "ask", amount: 18000000, currencyCode: "MXN", observedAt: daysAgo(6), sourceName: "RPC Mexico", brokerName: "Coldwell Banker MX", freshness: "weekly", confidence: "high" },
+  { id: "l-2015", reference: "LAX-CLO-2015", marketId: "m-los-angeles", parcelId: null, state: "closed", amount: 12800000, currencyCode: "USD", observedAt: daysAgo(4), sourceName: "LA County Assessor", brokerName: null, freshness: "daily", confidence: "verified" },
+  { id: "l-2016", reference: "CHI-ASK-2016", marketId: "m-chicago", parcelId: null, state: "ask", amount: 4100000, currencyCode: "USD", observedAt: daysAgo(7), sourceName: "Cook County Recorder", brokerName: "Compass Chicago", freshness: "daily", confidence: "high" },
+  { id: "l-2017", reference: "SEL-EST-2017", marketId: "m-seoul", parcelId: null, state: "estimate", amount: 3200000000, currencyCode: "KRW", observedAt: daysAgo(5), sourceName: "MOLIT Korea", brokerName: "JLL Seoul", freshness: "weekly", confidence: "medium" },
+  { id: "l-2018", reference: "SHA-ASK-2018", marketId: "m-shanghai", parcelId: null, state: "ask", amount: 42000000, currencyCode: "CNY", observedAt: daysAgo(3), sourceName: "SHFC", brokerName: "CBRE China", freshness: "daily", confidence: "high" },
+  { id: "l-2019", reference: "BKK-CLO-2019", marketId: "m-bangkok", parcelId: null, state: "closed", amount: 28000000, currencyCode: "THB", observedAt: daysAgo(8), sourceName: "Land Dept Thailand", brokerName: null, freshness: "weekly", confidence: "verified" },
+  { id: "l-2020", reference: "MAD-ASK-2020", marketId: "m-madrid", parcelId: null, state: "ask", amount: 3800000, currencyCode: "EUR", observedAt: daysAgo(2), sourceName: "Registro Propiedad", brokerName: "Savills España", freshness: "daily", confidence: "high" },
+  { id: "l-2021", reference: "ZRH-CLO-2021", marketId: "m-zurich", parcelId: null, state: "closed", amount: 5600000, currencyCode: "CHF", observedAt: daysAgo(6), sourceName: "Grundbuchamt", brokerName: null, freshness: "weekly", confidence: "verified" },
+  { id: "l-2022", reference: "NBI-ASK-2022", marketId: "m-nairobi", parcelId: null, state: "ask", amount: 45000000, currencyCode: "KES", observedAt: daysAgo(10), sourceName: "Ardhi House Kenya", brokerName: "Hass Consult", freshness: "weekly", confidence: "medium" },
+  { id: "l-2023", reference: "CAI-EST-2023", marketId: "m-cairo", parcelId: null, state: "estimate", amount: 9500000, currencyCode: "EGP", observedAt: daysAgo(7), sourceName: "Naqaa Egypt", brokerName: "Coldwell Banker EG", freshness: "weekly", confidence: "medium" },
+  { id: "l-2024", reference: "BUE-ASK-2024", marketId: "m-buenos-aires", parcelId: null, state: "ask", amount: 180000, currencyCode: "USD", observedAt: daysAgo(4), sourceName: "ARCA Argentina", brokerName: "RE/MAX Argentina", freshness: "weekly", confidence: "high" },
+  { id: "l-2025", reference: "GRU-CLO-2025", marketId: "m-sao-paulo", parcelId: null, state: "closed", amount: 4200000, currencyCode: "BRL", observedAt: daysAgo(5), sourceName: "ITBI São Paulo", brokerName: null, freshness: "daily", confidence: "verified" },
+  { id: "l-2026", reference: "LOS-ASK-2026", marketId: "m-lagos", parcelId: null, state: "ask", amount: 350000000, currencyCode: "NGN", observedAt: daysAgo(6), sourceName: "Lagos LASRERA", brokerName: "Fine & Country Nigeria", freshness: "weekly", confidence: "medium" }
 ];
 
 export const alerts: AlertDto[] = [
@@ -647,3 +1219,42 @@ export const reviewQueue: ReviewItemDto[] = [
     status: "pending"
   }
 ];
+
+// ── Mock data range validation ────────────────────────────────────────────────
+// Fails fast at import time if mock data drifts out of spec (e.g. a negative
+// activity score, zero pricing, or a freshness tag the UI doesn't handle).
+// Contract boundary guard — keeps bad fixtures from reaching the network.
+(() => {
+  for (const market of markets) {
+    if (!(market.activityScore >= 0 && market.activityScore <= 100)) {
+      throw new Error(
+        `[data] market ${market.id} activityScore out of range (0–100): ${market.activityScore}`
+      );
+    }
+    if (!(market.benchmarkPricePerSqm > 0)) {
+      throw new Error(
+        `[data] market ${market.id} invalid benchmarkPricePerSqm: ${market.benchmarkPricePerSqm}`
+      );
+    }
+    if (market.activeListings < 0) {
+      throw new Error(`[data] market ${market.id} negative activeListings`);
+    }
+    if (market.closedTransactions < 0) {
+      throw new Error(`[data] market ${market.id} negative closedTransactions`);
+    }
+  }
+  for (const listing of listings) {
+    if (!(listing.amount > 0)) {
+      throw new Error(
+        `[data] listing ${listing.id} invalid amount: ${listing.amount}`
+      );
+    }
+  }
+  for (const parcel of parcels) {
+    if (!(parcel.areaSqm > 0)) {
+      throw new Error(
+        `[data] parcel ${parcel.id} invalid areaSqm: ${parcel.areaSqm}`
+      );
+    }
+  }
+})();

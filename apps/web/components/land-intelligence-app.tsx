@@ -3,208 +3,69 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { CONFIDENCE_LABELS, COVERAGE_TIERS, FRESHNESS_TIERS, PRICE_STATES, type CoverageTier, type PriceState } from "@globe/types";
+import {
+  CONFIDENCE_LABELS,
+  COVERAGE_TIERS,
+  FRESHNESS_TIERS,
+  PRICE_STATES,
+  type CoverageTier,
+  type PriceState,
+  // DTO contracts — shared single source of truth with @globe/api via @globe/types.
+  type ActivityEventDto,
+  type AlertDto,
+  type BrokerProfileDto,
+  type CollectionResponse,
+  type CompareItemDto,
+  type CompareResponseDto,
+  type ExportMemoDto,
+  type InquiryDto,
+  type IntakeSubmissionDto,
+  type ListingDto,
+  type LoginResponseDto,
+  type MarketDto,
+  type ParcelDto,
+  type PointDto,
+  type SavedSearchDto,
+  type UserAlertDto,
+  type UserDto,
+  type WatchlistItemDto
+} from "@globe/types";
 import type { MapPricePoint } from "./globe-canvas";
+import { SQM_TO_SQFT } from "../lib/constants";
+import { ErrorBoundary } from "./error-boundary";
+import { AppShell, type ActiveView } from "./ui/AppShell";
+import { CommandPalette } from "./ui/CommandPalette";
+import { TickerTape } from "./ui/TickerTape";
+import { FloatingLegend } from "./ui/FloatingLegend";
+import { MetricToggle, type GlobeMetric } from "./ui/MetricToggle";
+import { CompareGrid } from "./ui/CompareGrid";
+import { WatchlistPage } from "./ui/WatchlistPage";
+import type { WatchlistCardItem } from "./ui/WatchlistCard";
+import { ParcelDossier } from "./ui/ParcelDossier";
+import { MarketPanel } from "./ui/MarketPanel";
+import { FilterBar, DEFAULT_FILTERS, type FilterState } from "./ui/FilterBar";
+import { MarketBentoGrid, type BentoMarket, type BentoEvent } from "./ui/MarketBentoGrid";
 
 const GlobeCanvas = dynamic(() => import("./globe-canvas").then((module) => module.GlobeCanvas), {
   ssr: false,
   loading: () => <div style={{ height: "100%", width: "100%", background: "#020617" }} />
 });
 
-interface PointDto {
-  lng: number;
-  lat: number;
-}
-
-interface MarketDto {
-  id: string;
-  slug: string;
-  name: string;
-  countryCode: string;
-  region: string;
-  timezone: string;
-  center: PointDto;
-  coverageTier: CoverageTier;
-  freshness: (typeof FRESHNESS_TIERS)[number];
-  confidence: (typeof CONFIDENCE_LABELS)[number];
-  activityScore: number;
-  activeListings: number;
-  closedTransactions: number;
-  benchmarkPricePerSqm: number;
-  benchmarkCurrency: string;
-  updatedAt: string;
-}
-
-interface ParcelDto {
-  id: string;
-  canonicalParcelId: string;
-  marketId: string;
-  title: string;
-  center: PointDto;
-  areaSqm: number;
-  zoningCode: string;
-  coverageTier: CoverageTier;
-  legalDisplayAllowed: boolean;
-  freshness: (typeof FRESHNESS_TIERS)[number];
-  confidence: (typeof CONFIDENCE_LABELS)[number];
-  updatedAt: string;
-}
-
-interface ListingDto {
-  id: string;
-  reference: string;
-  marketId: string;
-  parcelId: string | null;
-  state: PriceState;
-  amount: number;
-  currencyCode: string;
-  observedAt: string;
-  sourceName: string;
-  brokerName: string | null;
-  freshness: (typeof FRESHNESS_TIERS)[number];
-  confidence: (typeof CONFIDENCE_LABELS)[number];
-}
-
-interface AlertDto {
-  id: string;
-  marketId: string;
-  title: string;
-  ruleType: "new_listing" | "price_change" | "planning_signal";
-  isActive: boolean;
-  lastTriggeredAt: string | null;
-}
-
-interface ActivityEventDto {
-  id: string;
-  marketId: string;
-  summary: string;
-  occurredAt: string;
-  category: "listing" | "transaction" | "planning" | "verification";
-}
-
-interface UserDto {
-  id: string;
-  email: string;
-  name: string;
-  role: "operator" | "user";
-  createdAt: string;
-}
-
-interface SavedSearchDto {
-  id: string;
-  userId: string;
-  name: string;
-  query: string;
-  coverageTier: CoverageTier[];
-  state: PriceState[];
-  minConfidence: (typeof CONFIDENCE_LABELS)[number];
-  windowDays: number;
-  legalDisplayOnly: boolean;
-  marketId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface WatchlistItemDto {
-  id: string;
-  userId: string;
-  type: "market" | "parcel";
-  marketId: string | null;
-  parcelId: string | null;
-  label: string;
-  createdAt: string;
-}
-
-interface UserAlertDto extends AlertDto {
-  watchlistItemId: string;
-  watchlistLabel: string;
-}
-
-interface BrokerProfileDto {
-  id: string;
-  name: string;
-  marketIds: string[];
-  listingCount: number;
-  verifiedListingCount: number;
-  lastObservedAt: string | null;
-  status: "verified" | "active";
-}
-
-interface CompareItemDto {
-  parcelId: string;
-  parcelTitle: string;
-  marketId: string;
-  marketName: string;
-  areaSqm: number;
-  latestListingState: PriceState | null;
-  latestListingAmount: number | null;
-  latestListingCurrencyCode: string | null;
-  latestObservedAt: string | null;
-  averageObservedAmount: number | null;
-  observationCount: number;
-}
-
-interface CompareResponseDto {
-  generatedAt: string;
-  items: CompareItemDto[];
-}
-
-interface ExportMemoDto {
-  filename: string;
-  mimeType: "text/markdown";
-  content: string;
-}
-
-interface InquiryDto {
-  id: string;
-  userId: string;
-  listingId: string;
-  marketId: string;
-  message: string;
-  status: "submitted" | "acknowledged";
-  createdAt: string;
-}
-
-interface AuthResponseDto {
-  ok: boolean;
-  token: string | null;
-  email: string | null;
-  role: "operator" | "user" | null;
-  user: UserDto | null;
-  errorCode?: string;
-}
-
-interface IntakeSubmissionDto {
-  id: string;
-  type: "demo_request" | "listing_submission" | "issue_report" | "password_reset";
-  status: "pending" | "approved" | "rejected";
-  submittedAt: string;
-  submittedByEmail: string;
-  submittedByUserId: string | null;
-  marketId: string | null;
-  title: string;
-  description: string;
-  priority: "low" | "medium" | "high";
-  payload: Record<string, string>;
-}
-
-interface CollectionResponse<T> {
-  data: T[];
-  meta: {
-    total: number;
-  };
-}
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 const USER_SESSION_STORAGE_KEY = "globe_web_user_token";
-const SQM_TO_SQFT = 10.7639;
+
+// ⚠️ FX rate table below is a hand-curated snapshot last refreshed 2026-04-11.
+// Mock data only — DO NOT trust for real pricing. Replace with a live FX
+// service (ECB/Fixer/OpenExchangeRates) before production. Unknown currency
+// codes fall back to 1:1 and emit a console.warn via `toUsd`.
+// TODO: swap for live FX provider + cache layer.
 const FX_TO_USD: Record<string, number> = {
-  USD: 1,
-  AED: 0.2723,
-  GBP: 1.28,
-  SGD: 0.74,
-  BRL: 0.2,
-  NGN: 0.00063
+  USD: 1,       AED: 0.2723,  GBP: 1.28,    SGD: 0.74,
+  BRL: 0.2,     NGN: 0.00063, CAD: 0.73,    EUR: 1.08,
+  AUD: 0.65,    JPY: 0.0067,  HKD: 0.128,   INR: 0.012,
+  SAR: 0.2667,  TRY: 0.031,   ZAR: 0.054,   MXN: 0.058,
+  KRW: 0.00073, CNY: 0.138,   THB: 0.028,   CHF: 1.12,
+  KES: 0.0077,  EGP: 0.021,   ARS: 0.001
 };
 const LISTING_STATE_WEIGHTS: Record<PriceState, number> = {
   ask: 0.88,
@@ -213,8 +74,18 @@ const LISTING_STATE_WEIGHTS: Record<PriceState, number> = {
   broker_verified: 1.02
 };
 
+const warnedCurrencies = new Set<string>();
 const toUsd = (value: number, currencyCode: string): number => {
-  const fx = FX_TO_USD[currencyCode.toUpperCase()] ?? 1;
+  const upper = currencyCode.toUpperCase();
+  const fx = FX_TO_USD[upper];
+  if (fx === undefined) {
+    if (!warnedCurrencies.has(upper)) {
+      warnedCurrencies.add(upper);
+      // eslint-disable-next-line no-console
+      console.warn(`[land-intelligence] unknown currency "${upper}" — falling back to 1:1 USD conversion`);
+    }
+    return value;
+  }
   return value * fx;
 };
 
@@ -383,13 +254,21 @@ export const LandIntelligenceApp = () => {
   const [intakeMessage, setIntakeMessage] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
-  const [selectedMarketId, setSelectedMarketId] = useState<string>("");
+  const [selectedMarketId, setSelectedMarketId] = useState<string | null>(null);
   const [coverageFilter, setCoverageFilter] = useState<CoverageTier[]>([...COVERAGE_TIERS]);
   const [stateFilter, setStateFilter] = useState<PriceState[]>([...PRICE_STATES]);
   const [minConfidence, setMinConfidence] = useState<(typeof CONFIDENCE_LABELS)[number]>("low");
   const [windowDays, setWindowDays] = useState<number>(90);
   const [legalDisplayOnly, setLegalDisplayOnly] = useState<boolean>(true);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  // AppShell UI state
+  const [activeView, setActiveView] = useState<ActiveView>("globe");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [activeMetric, setActiveMetric] = useState<GlobeMetric>("ask");
+  const [drawerParcelId, setDrawerParcelId] = useState<string | null>(null);
+  const [filterBarState, setFilterBarState] = useState<FilterState>(DEFAULT_FILTERS);
+  const [showFilterBar, setShowFilterBar] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
@@ -1016,7 +895,7 @@ export const LandIntelligenceApp = () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body)
       });
-      const payload = (await response.json()) as AuthResponseDto;
+      const payload = (await response.json()) as LoginResponseDto;
       if (!response.ok || !payload.ok || !payload.token || !payload.user) {
         const fallback = response.status === 409 ? "Email already registered." : "Authentication failed.";
         setAuthMessage(payload.errorCode ? `Auth error: ${payload.errorCode}` : fallback);
@@ -1381,8 +1260,506 @@ export const LandIntelligenceApp = () => {
     }
   };
 
+  // ── Data transforms for new UI components ─────────────────────
+
+  const tickerItems = useMemo(() =>
+    events.slice(0, 20).map((e) => ({
+      id: e.id,
+      marketName: markets.find((m) => m.id === e.marketId)?.name ?? e.marketId,
+      summary: e.summary,
+      category: e.category,
+      occurredAt: e.occurredAt
+    })), [events, markets]);
+
+  const watchlistGroups = useMemo(() => {
+    const byType: Record<string, typeof watchlistItems> = {};
+    for (const item of watchlistItems) {
+      const key = item.type;
+      if (!byType[key]) byType[key] = [];
+      byType[key].push(item);
+    }
+    return Object.entries(byType).map(([type, items]) => ({
+      id: type,
+      name: type === "market" ? "Markets" : "Parcels",
+      type: type as "market" | "parcel",
+      items: items.map((item): WatchlistCardItem => ({
+        id: item.id,
+        type: item.type,
+        label: item.label,
+        marketName: item.marketId ? (markets.find((m) => m.id === item.marketId)?.name ?? item.marketId) : "—",
+        hasAlert: userAlerts.some((a) => (a as { watchlistItemId?: string }).watchlistItemId === item.id),
+        savedAt: item.createdAt
+      }))
+    }));
+  }, [watchlistItems, markets, userAlerts]);
+
+  const compareGridItems = useMemo(() =>
+    (compareResult?.items ?? []).map((item) => ({
+      parcelId: item.parcelId,
+      parcelTitle: item.parcelTitle,
+      marketId: item.marketId,
+      marketName: item.marketName,
+      areaSqm: item.areaSqm,
+      latestListingState: item.latestListingState,
+      latestListingAmount: item.latestListingAmount,
+      latestListingCurrencyCode: item.latestListingCurrencyCode,
+      averageObservedAmount: item.averageObservedAmount,
+      observationCount: item.observationCount,
+      latestObservedAt: item.latestObservedAt
+    })), [compareResult]);
+
+  const drawerParcel = drawerParcelId ? parcels.find((p) => p.id === drawerParcelId) ?? null : null;
+  const drawerListings = drawerParcelId ? listings.filter((l) => l.parcelId === drawerParcelId) : [];
+
+  const bentoMarkets = useMemo((): BentoMarket[] =>
+    markets.map((m) => {
+      const mListings = listings.filter((l) => l.marketId === m.id);
+      const askPrices = mListings.filter((l) => l.state === "ask").map((l) => l.amount);
+      const recentPrices = askPrices.slice(-8);
+      const first = recentPrices[0];
+      const last = recentPrices[recentPrices.length - 1];
+      const changePercent = recentPrices.length >= 2 && first != null && last != null
+        ? ((last - first) / first) * 100
+        : null;
+      const confidenceMap: Record<string, number> = { verified: 95, high: 75, medium: 50, low: 25 };
+      return {
+        id: m.id,
+        name: m.name,
+        region: m.region,
+        countryCode: m.countryCode,
+        askPricePerSqm: m.benchmarkPricePerSqm ?? (askPrices.length > 0 ? askPrices[askPrices.length - 1] : null),
+        currencyCode: m.benchmarkCurrency ?? "USD",
+        changePercent,
+        activityScore: m.activityScore,
+        confidence: confidenceMap[m.confidence] ?? 50,
+        activeListings: m.activeListings,
+        sparkline: recentPrices,
+        priceChangeYoy: m.priceChangeYoy ?? null
+      };
+    }), [markets, listings]);
+
+  const bentoEvents = useMemo((): BentoEvent[] =>
+    events.slice(0, 30).map((e) => ({
+      id: e.id,
+      marketName: markets.find((m) => m.id === e.marketId)?.name ?? e.marketId,
+      summary: e.summary,
+      type: e.category as BentoEvent["type"],
+      occurredAt: e.occurredAt
+    })), [events, markets]);
+
   return (
-    <main className="shell">
+    <>
+      {/* ── New AppShell ─────────────────────────────────── */}
+      <AppShell
+        activeView={activeView}
+        onViewChange={setActiveView}
+        ticker={tickerItems.length > 0 ? <TickerTape items={tickerItems} /> : undefined}
+        legend={<FloatingLegend metric={activeMetric} />}
+        userEmail={currentUser?.email}
+        userName={currentUser?.name}
+        onLogout={() => void logoutUser()}
+        onCommandPalette={() => setCommandPaletteOpen(true)}
+        drawerState={drawerParcel ? {
+          open: true,
+          title: drawerParcel.legalDisplayAllowed ? drawerParcel.title : "Restricted Parcel",
+          subtitle: drawerParcel.legalDisplayAllowed ? drawerParcel.canonicalParcelId : undefined,
+          content: (
+            <ParcelDossier
+              parcel={{
+                id: drawerParcel.id,
+                title: drawerParcel.legalDisplayAllowed ? drawerParcel.title : "Restricted Parcel",
+                canonicalParcelId: drawerParcel.canonicalParcelId,
+                marketName: markets.find((m) => m.id === drawerParcel.marketId)?.name ?? drawerParcel.marketId,
+                areaSqm: drawerParcel.areaSqm,
+                zoningCode: drawerParcel.zoningCode,
+                coverageTier: drawerParcel.coverageTier,
+                confidence: drawerParcel.confidence,
+                freshness: drawerParcel.freshness,
+                legalDisplayAllowed: drawerParcel.legalDisplayAllowed,
+                updatedAt: drawerParcel.updatedAt
+              }}
+              listings={drawerListings.map((l) => ({
+                id: l.id,
+                state: l.state,
+                amount: l.amount,
+                currencyCode: l.currencyCode,
+                observedAt: l.observedAt,
+                sourceName: l.sourceName,
+                brokerName: l.brokerName
+              }))}
+              isWatchlisted={watchlistItems.some((w) => w.parcelId === drawerParcelId)}
+              isComparing={compareParcelIds.includes(drawerParcelId ?? "")}
+              onWatchlist={() => drawerParcel && void saveParcelWatchlist(drawerParcel)}
+              onCompare={() => drawerParcelId && toggleCompareParcel(drawerParcelId)}
+            />
+          )
+        } : { open: false }}
+        onCloseDrawer={() => setDrawerParcelId(null)}
+      >
+        {/* ── Globe View ── */}
+        {activeView === "globe" && (
+          <div className="relative h-full w-full" style={{ background: "var(--bg-void)" }}>
+            {/* Globe canvas — full bleed */}
+            <ErrorBoundary
+              label="globe-canvas:globe-view"
+              fallback={
+                <div className="absolute inset-0 flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
+                  Globe failed to load. Refresh the page to try again.
+                </div>
+              }
+            >
+              <GlobeCanvas
+                markets={mapMarkets.length > 0 ? mapMarkets : markets}
+                pricePoints={mapPricePoints}
+                selectedMarketId={selectedMarketId ?? ""}
+                onSelectMarket={(id) => { setSelectedMarketId(id); setDrawerParcelId(null); setActiveView("markets"); }}
+              />
+            </ErrorBoundary>
+            {/* Vignette overlay */}
+            <div
+              className="absolute inset-0 pointer-events-none z-[1]"
+              style={{
+                background: "radial-gradient(ellipse 80% 80% at 50% 50%, transparent 60%, rgba(9,9,12,0.6) 100%)"
+              }}
+              aria-hidden="true"
+            />
+            {/* Floating metric toggle — top center */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+              <MetricToggle
+                active={activeMetric}
+                onChange={setActiveMetric}
+              />
+            </div>
+
+            {/* Floating insight dock — positioned absolute top-right */}
+            <aside
+              className="absolute top-4 right-4 bottom-16 w-[320px] flex flex-col rounded-2xl overflow-hidden z-10"
+              style={{ background: "rgba(13,14,19,0.88)", border: "1px solid rgba(255,255,255,0.07)", backdropFilter: "blur(24px)", boxShadow: "0 8px 48px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)" }}
+            >
+              {/* Summary strip */}
+              <div className="px-5 pt-5 pb-4 border-b border-[var(--border-subtle)]">
+                <h2 className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+                  Global Overview
+                </h2>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { value: markets.length, label: "Markets" },
+                    { value: markets.reduce((s, m) => s + m.activeListings, 0), label: "Listings" },
+                    { value: markets.reduce((s, m) => s + m.closedTransactions, 0), label: "Closed" }
+                  ].map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="rounded-lg px-3 py-2.5 text-center"
+                      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}
+                    >
+                      <div className="text-[20px] font-semibold text-[var(--text-primary)] tabular-nums leading-none mb-1">
+                        {stat.value.toLocaleString()}
+                      </div>
+                      <div className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wide">{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Top Markets */}
+              <div className="px-5 py-4 border-b border-[var(--border-subtle)]">
+                <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+                  Top Markets by Activity
+                </h3>
+                <div className="space-y-1.5">
+                  {[...markets]
+                    .sort((a, b) => b.activityScore - a.activityScore)
+                    .slice(0, 6)
+                    .map((m, i) => {
+                      const priceUsd = toUsd(m.benchmarkPricePerSqm, m.benchmarkCurrency);
+                      const barColor = m.activityScore > 60 ? "var(--color-accent-success)" : m.activityScore > 30 ? "var(--color-accent-warning)" : "var(--color-accent-danger)";
+                      return (
+                        <button
+                          key={m.id}
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.04] transition-colors text-left group"
+                          style={{ border: "1px solid transparent" }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.06)"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "transparent"; }}
+                          onClick={() => { setSelectedMarketId(m.id); }}
+                        >
+                          {/* Rank number */}
+                          <span className="text-[11px] font-mono text-[var(--text-tertiary)] w-4 text-right shrink-0">{i + 1}</span>
+                          {/* Activity bar */}
+                          <div className="w-1 self-stretch rounded-full shrink-0" style={{
+                            background: `linear-gradient(to top, transparent, ${barColor})`,
+                            opacity: 0.7
+                          }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-[13px] font-medium text-[var(--text-primary)] truncate">{m.name}</span>
+                              <span className="text-[12px] tabular-nums text-[var(--text-secondary)] ml-2 shrink-0 font-mono">
+                                ${Math.round(priceUsd).toLocaleString()}<span className="text-[10px] text-[var(--text-tertiary)]">/m²</span>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5">
+                              <span className="text-[11px] text-[var(--text-tertiary)]">{m.activeListings} listings</span>
+                              <span className="text-[11px] text-[var(--text-tertiary)]">{m.closedTransactions} closed</span>
+                              {m.priceChangeYoy !== undefined && (
+                                <span className={`text-[11px] tabular-nums font-medium ${m.priceChangeYoy >= 0 ? "text-[var(--color-accent-success)]" : "text-[var(--color-accent-danger)]"}`}>
+                                  {m.priceChangeYoy >= 0 ? "+" : ""}{(m.priceChangeYoy * 100).toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Live Activity Feed */}
+              <div className="px-5 py-4 flex-1 min-h-0 overflow-hidden flex flex-col">
+                <div className="flex items-center gap-2 mb-3 shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent-success)] animate-pulse" />
+                  <h3 className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-tertiary)]">
+                    Live Activity
+                  </h3>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0">
+                  {events.slice(0, 20).map((ev) => {
+                    const market = markets.find((m) => m.id === ev.marketId);
+                    const categoryColors: Record<string, string> = {
+                      listing: "var(--color-accent-primary)",
+                      transaction: "var(--color-accent-success)",
+                      planning: "var(--color-accent-warning)",
+                      verification: "var(--color-accent-purple)"
+                    };
+                    const ago = (() => {
+                      const diff = Date.now() - new Date(ev.occurredAt).getTime();
+                      const hours = Math.floor(diff / 3_600_000);
+                      if (hours < 1) return `${Math.max(1, Math.floor(diff / 60_000))}m`;
+                      if (hours < 24) return `${hours}h`;
+                      return `${Math.floor(hours / 24)}d`;
+                    })();
+                    return (
+                      <div key={ev.id} className="flex items-start gap-2 py-1">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
+                          style={{ background: categoryColors[ev.category] ?? "var(--color-accent-primary)" }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] text-[var(--text-secondary)] leading-snug line-clamp-2">
+                            <span className="font-medium text-[var(--text-primary)]">{market?.name ?? "Unknown"}</span>{" "}
+                            {ev.summary}
+                          </p>
+                          <span className="text-[10px] text-[var(--text-tertiary)] tabular-nums">{ago} ago</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {events.length === 0 && (
+                    <div className="text-[11px] text-[var(--text-tertiary)] py-4 text-center">Loading activity...</div>
+                  )}
+                </div>
+              </div>
+            </aside>
+          </div>
+        )}
+
+        {/* ── Compare View ── */}
+        {activeView === "compare" && (
+          <div className="h-full overflow-hidden bg-[var(--bg-base)]">
+            <CompareGrid
+              parcels={compareGridItems}
+              onRemove={(id) => setCompareParcelIds((prev) => prev.filter((p) => p !== id))}
+              onAdd={() => setActiveView("globe")}
+              onExport={() => {
+                if (compareParcelIds.length > 0) {
+                  void (async () => {
+                    try {
+                      const memo = await fetchResource<ExportMemoDto>(`/v1/export/memo?${compareParcelIds.map((id) => `parcelId=${id}`).join("&")}`, { token: authToken });
+                      const blob = new Blob([memo.content], { type: memo.mimeType });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url; a.download = memo.filename; a.click();
+                      URL.revokeObjectURL(url);
+                    } catch {}
+                  })();
+                }
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Watchlist View ── */}
+        {activeView === "watchlist" && (
+          <div className="h-full overflow-hidden bg-[var(--bg-base)]">
+            <WatchlistPage
+              groups={watchlistGroups}
+              loading={isLoading}
+              onRemoveItem={(id) => {
+                void (async () => {
+                  try {
+                    await fetch(`${API_BASE_URL}/v1/watchlists/${id}`, {
+                      method: "DELETE",
+                      headers: buildHeaders(authToken)
+                    });
+                    setWatchlistItems((prev) => prev.filter((w) => w.id !== id));
+                  } catch {}
+                })();
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Markets View ── */}
+        {activeView === "markets" && (
+          <div className="flex h-full overflow-hidden" style={{ background: "var(--bg-base)" }}>
+            {/* When a market is selected: show globe + filter + detail panel */}
+            {selectedMarketId ? (
+              <>
+                {showFilterBar && (
+                  <FilterBar
+                    value={filterBarState}
+                    onChange={setFilterBarState}
+                    loading={isLoading || isDetailsLoading}
+                    resultCount={parcels.length + listings.length}
+                    className="w-56 shrink-0 h-full"
+                  />
+                )}
+                <div className="flex-1 flex overflow-hidden">
+                  <div className="flex-1 relative min-w-0" style={{ background: "var(--bg-void)" }}>
+                    <ErrorBoundary
+                      label="globe-canvas:explore"
+                      fallback={
+                        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
+                          Globe failed to load. Refresh the page to try again.
+                        </div>
+                      }
+                    >
+                      <GlobeCanvas
+                        markets={mapMarkets.length > 0 ? mapMarkets : markets}
+                        pricePoints={mapPricePoints}
+                        selectedMarketId={selectedMarketId ?? ""}
+                        onSelectMarket={(id) => { setSelectedMarketId(id); setDrawerParcelId(null); }}
+                      />
+                    </ErrorBoundary>
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">
+                      <MetricToggle active={activeMetric} onChange={setActiveMetric} />
+                      <button
+                        onClick={() => setShowFilterBar((v) => !v)}
+                        className={[
+                          "h-7 px-3 rounded-full text-[12px] font-medium glass-heavy transition-all",
+                          showFilterBar ? "text-[var(--accent-primary)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                        ].join(" ")}
+                        aria-pressed={showFilterBar}
+                        aria-label="Toggle filter panel"
+                      >
+                        Filters
+                      </button>
+                      <button
+                        onClick={() => setSelectedMarketId(null)}
+                        className="h-7 px-3 rounded-full text-[12px] font-medium glass-heavy text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all"
+                        aria-label="Back to overview"
+                      >
+                        ← Overview
+                      </button>
+                    </div>
+                  </div>
+                  <div className="w-80 shrink-0 overflow-hidden" style={{ borderLeft: "1px solid rgba(255,255,255,0.06)", background: "var(--bg-surface)" }}>
+                    <MarketPanel
+                  market={selectedMarket ? {
+                    id: selectedMarket.id,
+                    name: selectedMarket.name,
+                    region: selectedMarket.region,
+                    countryCode: selectedMarket.countryCode,
+                    timezone: selectedMarket.timezone,
+                    coverageTier: selectedMarket.coverageTier,
+                    confidence: selectedMarket.confidence,
+                    freshness: selectedMarket.freshness,
+                    activityScore: selectedMarket.activityScore,
+                    activeListings: selectedMarket.activeListings,
+                    closedTransactions: selectedMarket.closedTransactions,
+                    benchmarkPricePerSqm: selectedMarket.benchmarkPricePerSqm,
+                    benchmarkCurrency: selectedMarket.benchmarkCurrency,
+                    updatedAt: selectedMarket.updatedAt
+                  } : null}
+                  listings={listings.map((l) => ({
+                    id: l.id,
+                    reference: l.reference,
+                    state: l.state,
+                    amount: l.amount,
+                    currencyCode: l.currencyCode,
+                    observedAt: l.observedAt,
+                    sourceName: l.sourceName,
+                    brokerName: l.brokerName,
+                    freshness: l.freshness,
+                    confidence: l.confidence
+                  }))}
+                  alerts={alerts}
+                  loading={isDetailsLoading}
+                />
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* No market selected — show bento grid overview */
+              <MarketBentoGrid
+                markets={bentoMarkets}
+                events={bentoEvents}
+                onSelectMarket={(id) => { setSelectedMarketId(id); setDrawerParcelId(null); }}
+                loading={isLoading}
+              />
+            )}
+          </div>
+        )}
+
+        {/* ── Alerts View ── */}
+        {activeView === "alerts" && (
+          <div className="h-full overflow-auto p-6">
+            <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-4">Active Alerts ({alerts.length})</h2>
+            {alerts.length === 0 ? (
+              <p className="text-[var(--text-tertiary)] text-[13px]">No alerts configured. Set alerts from any market or parcel view.</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-w-lg">
+                {alerts.map((a) => (
+                  <div key={a.id} className="flex items-center gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--bg-surface)] border border-[var(--border-subtle)]">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${a.isActive ? "bg-[var(--accent-success)]" : "bg-[var(--text-tertiary)]"}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-[var(--text-primary)] truncate">{a.title}</p>
+                      <p className="text-[11px] text-[var(--text-tertiary)]">{a.ruleType.replace("_", " ")}</p>
+                    </div>
+                    {a.lastTriggeredAt && (
+                      <span className="text-[11px] text-[var(--text-tertiary)] shrink-0">
+                        {new Date(a.lastTriggeredAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Settings View ── */}
+        {activeView === "settings" && (
+          <div className="h-full overflow-auto p-6 max-w-lg">
+            <h2 className="text-[14px] font-semibold text-[var(--text-primary)] mb-4">Settings</h2>
+            <p className="text-[13px] text-[var(--text-tertiary)]">Settings panel coming soon.</p>
+          </div>
+        )}
+      </AppShell>
+
+      {/* ── CommandPalette ── */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        items={[
+          ...markets.slice(0, 20).map((m) => ({
+            id: m.id, label: m.name, description: m.region, group: "Markets",
+            onSelect: () => { setSelectedMarketId(m.id); setActiveView("globe"); setCommandPaletteOpen(false); }
+          }))
+        ]}
+      />
+
+      {/* ── Legacy shell (hidden — kept for reference / graceful fallback) ── */}
+      <div style={{ display: "none" }} aria-hidden="true">
+      <main className="shell" id="legacy-shell">
       <header className="topbar">
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <strong>Globe Land Intelligence</strong>
@@ -1443,7 +1820,7 @@ export const LandIntelligenceApp = () => {
         <select
           id="market-selector"
           className="field-input"
-          value={selectedMarketId}
+          value={selectedMarketId ?? ""}
           disabled={markets.length === 0}
           onChange={(event) => setSelectedMarketId(event.target.value)}
         >
@@ -1835,12 +2212,21 @@ export const LandIntelligenceApp = () => {
       </aside>
 
       <section className="map">
-        <GlobeCanvas
-          markets={mapMarkets.length > 0 ? mapMarkets : markets}
-          pricePoints={mapPricePoints}
-          selectedMarketId={selectedMarketId}
-          onSelectMarket={setSelectedMarketId}
-        />
+        <ErrorBoundary
+          label="globe-canvas:legacy"
+          fallback={
+            <div className="absolute inset-0 flex items-center justify-center text-[13px] text-[var(--text-secondary)]">
+              Globe failed to load. Refresh the page to try again.
+            </div>
+          }
+        >
+          <GlobeCanvas
+            markets={mapMarkets.length > 0 ? mapMarkets : markets}
+            pricePoints={mapPricePoints}
+            selectedMarketId={selectedMarketId ?? ""}
+            onSelectMarket={(id) => setSelectedMarketId(id)}
+          />
+        </ErrorBoundary>
       </section>
 
       <aside className="right">
@@ -2158,5 +2544,7 @@ export const LandIntelligenceApp = () => {
         </div>
       ) : null}
     </main>
+      </div>
+    </>
   );
 };

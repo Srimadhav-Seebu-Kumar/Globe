@@ -1,0 +1,29 @@
+/* Globe Design System — Layout Tokens */
+
+:root {
+  /* ── Z-Index Layers ─────────────────────────────── */
+  --z-map: 0;
+  --z-map-overlay: 10;
+  --z-bottom-panel: 20;
+  --z-sidebar: 30;
+  --z-top-bar: 40;
+  --z-drawer: 50;
+  --z-tooltip: 60;
+  --z-modal: 70;
+  --z-command-palette: 80;
+  --z-toast: 90;
+
+  /* ── Panel Dimensions ───────────────────────────── */
+  --sidebar-width-collapsed: 64px;
+  --sidebar-width-expanded: 220px;
+  --top-bar-height: 60px;
+  --right-drawer-width: 400px;
+  --right-drawer-width-wide: 480px;
+  --bottom-panel-height-collapsed: 48px;
+  --bottom-panel-height-expanded: 280px;
+
+  /* ── Breakpoints ────────────────────────────────── */
+  --bp-mobile: 768px;
+  --bp-tablet: 1024px;
+  --bp-desktop: 1440px;
+}
