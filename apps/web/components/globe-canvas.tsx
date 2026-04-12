@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, {
+  type ExpressionSpecification,
+  type FilterSpecification,
   type GeoJSONSource,
   type MapLayerMouseEvent,
   type MapMouseEvent,
   type MapTouchEvent,
   type StyleSpecification
 } from "maplibre-gl";
+import {
+  GRID_MAX_ZOOM,
+  GRID_MIN_ZOOM,
+  SQM_TO_SQFT as SHARED_SQM_TO_SQFT
+} from "../lib/constants";
 import type { CoverageTier } from "@globe/types";
 
 interface MarketMapItem {
@@ -106,22 +113,6 @@ interface HoverPointerState {
   lat: number;
 }
 
-interface DotParticle {
-  id: string;
-  homeLng: number;
-  homeLat: number;
-  lng: number;
-  lat: number;
-  priceScore: number;
-  phase: number;
-  speed: number;
-  idleLngDeg: number;
-  idleLatDeg: number;
-  velocityLngDeg: number;
-  velocityLatDeg: number;
-  maxOffsetKm: number;
-}
-
 interface LandSpatialIndex {
   buckets: Map<string, LandPolygon[]>;
 }
@@ -143,7 +134,7 @@ const HOVER_EXTRUSION_LAYERS = [
 ] as const;
 
 const HOVER_EXTRUSION_LAYER_IDS = HOVER_EXTRUSION_LAYERS.map((layer) => layer.id);
-const EMPTY_GRID_FILTER: any = ["==", ["get", "gridId"], ""];
+const EMPTY_GRID_FILTER: FilterSpecification = ["==", ["get", "gridId"], ""];
 
 const style: StyleSpecification = {
   version: 8,
@@ -165,19 +156,31 @@ const style: StyleSpecification = {
 const LANDMASS_GEOJSON_URL = "/data/ne_110m_land.geojson";
 const MAJOR_CITIES_GEOJSON_URL = "/data/ne_110m_populated_places_simple.json";
 const PLACE_LABELS_GEOJSON_URL = "/data/ne_10m_populated_places_simple.geojson";
-const SATELLITE_TILE_URL = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_ATTRIBUTION = "Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community";
+// Esri World Imagery — free tile service, no API key required, native max zoom 19.
+// Attribution is mandatory per Esri's terms of use.
+const SATELLITE_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+];
+// Esri World Boundaries and Places reference overlay (country borders + place labels).
+const SATELLITE_LABELS_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+];
+const SATELLITE_ATTRIBUTION =
+  'Tiles © <a href="https://www.esri.com/">Esri</a> — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 const SATELLITE_LAYER_ID = "satellite-imagery";
-const SATELLITE_LABELS_TILE_URL =
-  "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_ROADS_TILE_URL =
-  "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}";
-const SATELLITE_REFERENCE_ATTRIBUTION = "Reference (c) Esri";
+// Esri World Transportation — road network reference overlay.
+const SATELLITE_ROADS_TILE_URLS = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+];
+const SATELLITE_REFERENCE_ATTRIBUTION =
+  'Reference © <a href="https://www.esri.com/">Esri</a> — World Boundaries & Places, World Transportation';
+/** Esri World Imagery native max zoom. */
+const SATELLITE_MAX_NATIVE_ZOOM = 19;
 const SATELLITE_LABELS_LAYER_ID = "satellite-reference-labels";
 const SATELLITE_ROADS_LAYER_ID = "satellite-reference-roads";
 const SATELLITE_REFERENCE_LAYER_IDS = [SATELLITE_ROADS_LAYER_ID, SATELLITE_LABELS_LAYER_ID] as const;
 const DARK_BASE_LAYER_IDS = ["landmass-fill", "landmass-outline", "graticule-lines", "ocean-mask-fill"] as const;
-const SQM_TO_SQFT = 10.7639;
+const SQM_TO_SQFT = SHARED_SQM_TO_SQFT;
 const EARTH_RADIUS_KM = 6371;
 const GRID_MAX_FEATURES = 12000;
 const MIN_RENDER_LAT = -82;
@@ -193,22 +196,10 @@ const GRID_UPDATE_MIN_INTERVAL_MS = 90;
 const INTERPOLATION_NEIGHBOR_COUNT = 4;
 const INTERPOLATION_DISTANCE_OFFSET_KM = 24;
 const INTERPOLATION_DISTANCE_POWER = 1.35;
-const HOVER_SPREAD_MULTIPLIER = 1.5;
+const HOVER_SPREAD_MULTIPLIER = 4;
 const HOVER_VIEWPORT_HEIGHT_RATIO_CAP = 0.2;
-const MAX_HOVER_INFLUENCE_CELLS = 320;
-const DOT_PARTICLE_MAX_VISIBLE = 9000;
-const DOT_PARTICLE_IDLE_FRACTION_MIN = 0.012;
-const DOT_PARTICLE_IDLE_FRACTION_MAX = 0.038;
-const DOT_PARTICLE_SPRING_STIFFNESS = 5.2;
-const DOT_PARTICLE_DAMPING = 0.9;
-const DOT_PARTICLE_PULL_STRENGTH = 0.82;
-const DOT_PARTICLE_SWIRL_STRENGTH = 0.28;
-const DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC = 1.7;
-const DOT_PARTICLE_MAX_INTERACTION_RADIUS_KM = 880;
-const DOT_PARTICLE_BASE_ALPHA = 0.26;
-const DOT_PARTICLE_HOVER_ALPHA_BOOST = 0.18;
+const MAX_HOVER_INFLUENCE_CELLS = 1200;
 const sqftNumberFormatter = new Intl.NumberFormat("en-US");
-const dotColorCache = new Map<string, string>();
 const FX_TO_USD: Record<string, number> = {
   USD: 1,
   AED: 0.2723,
@@ -259,28 +250,38 @@ const emptyOceanMaskCollection: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
 };
 
 const getGridStepDegrees = (zoom: number): number => {
-  const normalizedZoom = Math.max(1, Math.min(zoom, 16));
+  const normalizedZoom = Math.max(GRID_MIN_ZOOM, Math.min(zoom, GRID_MAX_ZOOM));
   const computedStep = 3 / Math.pow(2, Math.max(0, normalizedZoom - 2));
   return Math.max(0.00008, Number(computedStep.toFixed(6)));
 };
 
+// Continuous blend radius (km) across the full zoom range. Prior implementation
+// used a step function which produced visible grid jumps at integer boundaries.
+// Keyed anchor points: z1 → 2200km, z4 → 1200km, z8 → 520km, z12 → 220km,
+// z16 → 120km, z19 → 80km. Piecewise linear between these anchors.
+const BLEND_RADIUS_ANCHORS: ReadonlyArray<readonly [number, number]> = [
+  [1, 2200],
+  [4, 1200],
+  [8, 520],
+  [12, 220],
+  [16, 120],
+  [19, 80]
+];
+
 const getBlendRadiusKm = (zoom: number): number => {
-  if (zoom < 2) {
-    return 2200;
+  const clampedZoom = Math.max(GRID_MIN_ZOOM, Math.min(zoom, GRID_MAX_ZOOM));
+  for (let i = 0; i < BLEND_RADIUS_ANCHORS.length - 1; i += 1) {
+    const left = BLEND_RADIUS_ANCHORS[i];
+    const right = BLEND_RADIUS_ANCHORS[i + 1];
+    if (!left || !right) continue;
+    const [z0, r0] = left;
+    const [z1, r1] = right;
+    if (clampedZoom >= z0 && clampedZoom <= z1) {
+      const t = (clampedZoom - z0) / (z1 - z0);
+      return r0 + (r1 - r0) * t;
+    }
   }
-  if (zoom < 4) {
-    return 1600;
-  }
-  if (zoom < 6) {
-    return 900;
-  }
-  if (zoom < 8) {
-    return 520;
-  }
-  if (zoom < 10) {
-    return 300;
-  }
-  return 160;
+  return BLEND_RADIUS_ANCHORS[BLEND_RADIUS_ANCHORS.length - 1]?.[1] ?? 160;
 };
 
 const toRadians = (degrees: number): number => (degrees * Math.PI) / 180;
@@ -469,7 +470,9 @@ const ensureClosedRing = (ring: [number, number][]): [number, number][] => {
     return ring;
   }
 
-  if (Math.abs(last[0] - first[0]) < 1e-9 && Math.abs(last[1] - first[1]) < 1e-9) {
+  // GeoJSON coordinates have ~6 decimal places of precision (~11cm at the
+  // equator); 1e-6 is a realistic epsilon for ring closure.
+  if (Math.abs(last[0] - first[0]) < 1e-6 && Math.abs(last[1] - first[1]) < 1e-6) {
     return ring;
   }
 
@@ -737,16 +740,6 @@ const shortestLongitudeDelta = (lngA: number, lngB: number): number => {
   return rawDelta > 180 ? 360 - rawDelta : rawDelta;
 };
 
-const shortestLongitudeDeltaSigned = (fromLng: number, toLng: number): number => {
-  let delta = normalizeLongitude(toLng) - normalizeLongitude(fromLng);
-  if (delta > 180) {
-    delta -= 360;
-  } else if (delta < -180) {
-    delta += 360;
-  }
-  return delta;
-};
-
 const planarDistanceKm = (lngA: number, latA: number, lngB: number, latB: number): number => {
   const meanLatRadians = toRadians((latA + latB) / 2);
   const deltaLng = shortestLongitudeDelta(lngA, lngB);
@@ -756,172 +749,39 @@ const planarDistanceKm = (lngA: number, latA: number, lngB: number, latB: number
   return Math.sqrt(dx * dx + dy * dy);
 };
 
-const seededNoise = (seed: number): number => {
-  const value = Math.sin(seed * 12.9898) * 43758.5453;
-  return value - Math.floor(value);
-};
-
-const getDotColor = (priceScore: number, alpha: number): string => {
-  const normalizedScore = Math.max(0, Math.min(1, priceScore));
-  const normalizedAlpha = Math.max(0.05, Math.min(0.9, alpha));
-  const scoreKey = Math.round(normalizedScore * 20);
-  const alphaKey = Math.round(normalizedAlpha * 100);
-  const cacheKey = `${scoreKey}:${alphaKey}`;
-  const cached = dotColorCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const red = Math.round(96 + normalizedScore * 76);
-  const green = Math.round(154 + normalizedScore * 40);
-  const blue = Math.round(208 - normalizedScore * 52);
-  const color = `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha.toFixed(2)})`;
-  dotColorCache.set(cacheKey, color);
-  return color;
-};
-
-const getDotBudgetForZoom = (zoom: number): number => {
-  if (zoom < 3) {
-    return 2800;
-  }
-  if (zoom < 6) {
-    return 4500;
-  }
-  if (zoom < 9) {
-    return 6400;
-  }
-  if (zoom < 12) {
-    return 7800;
-  }
-  return DOT_PARTICLE_MAX_VISIBLE;
-};
-
-const createDotParticlesFromGridCells = (cells: GridCellMeta[], zoom: number): DotParticle[] => {
-  if (cells.length === 0) {
-    const fallbackCount = Math.min(getDotBudgetForZoom(zoom), 1800);
-    const fallback: DotParticle[] = [];
-    for (let index = 0; index < fallbackCount; index += 1) {
-      const lng = normalizeLongitude(-180 + seededNoise(index * 17 + 1) * 360);
-      const lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, -68 + seededNoise(index * 23 + 3) * 136));
-      fallback.push({
-        id: `fallback:${index}`,
-        homeLng: lng,
-        homeLat: lat,
-        lng,
-        lat,
-        priceScore: 0.35,
-        phase: seededNoise(index * 29 + 5) * Math.PI * 2,
-        speed: 0.45 + seededNoise(index * 31 + 7) * 0.7,
-        idleLngDeg: 0.03,
-        idleLatDeg: 0.024,
-        velocityLngDeg: 0,
-        velocityLatDeg: 0,
-        maxOffsetKm: 16
-      });
-    }
-    return fallback;
-  }
-
-  const targetBudget = getDotBudgetForZoom(zoom);
-  const priceValues = cells.map((cell) => cell.avgPricePerSqft).filter((value) => Number.isFinite(value) && value > 0);
-  const minPrice = priceValues.length > 0 ? Math.min(...priceValues) : 0;
-  const maxPrice = priceValues.length > 0 ? Math.max(...priceValues) : minPrice;
-  const priceRange = Math.max(0.0001, maxPrice - minPrice);
-  const particles: DotParticle[] = [];
-
-  const desiredCounts = cells.map((cell) => {
-    const normalizedPrice = Math.max(0, Math.min(1, (cell.avgPricePerSqft - minPrice) / priceRange));
-    const zoomBoost = zoom >= 9 ? 1 : zoom >= 6 ? 0.5 : 0;
-    const rawCount = 1 + normalizedPrice * 1.6 + zoomBoost;
-    return Math.max(1, Math.min(4, Math.round(rawCount)));
-  });
-  const maxDesired = desiredCounts.reduce((max, count) => Math.max(max, count), 0);
-
-  let particleSeed = 1;
-  for (let pass = 0; pass < maxDesired; pass += 1) {
-    for (let index = 0; index < cells.length; index += 1) {
-      if (particles.length >= targetBudget) {
-        return particles;
-      }
-
-      const desiredCount = desiredCounts[index] ?? 0;
-      const cell = cells[index];
-      if (!cell || pass >= desiredCount) {
-        continue;
-      }
-
-      const normalizedPrice = Math.max(0, Math.min(1, (cell.avgPricePerSqft - minPrice) / priceRange));
-      const latStretch = Math.max(0.18, Math.cos(toRadians(cell.centerLat)));
-      const spanLng = cell.stepDegrees * latStretch;
-      const spanLat = cell.stepDegrees;
-      const jitterLng = (seededNoise(particleSeed * 29 + pass * 11 + 1) - 0.5) * spanLng * 0.58;
-      const jitterLat = (seededNoise(particleSeed * 31 + pass * 17 + 2) - 0.5) * spanLat * 0.58;
-      const initialLng = normalizeLongitude(cell.centerLng + jitterLng);
-      const initialLat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, cell.centerLat + jitterLat));
-      const idleFraction =
-        DOT_PARTICLE_IDLE_FRACTION_MIN +
-        seededNoise(particleSeed * 13 + 7) * (DOT_PARTICLE_IDLE_FRACTION_MAX - DOT_PARTICLE_IDLE_FRACTION_MIN);
-      const areaSqm = Math.max(1, cell.approxCellAreaSqft / SQM_TO_SQFT);
-      const cellAreaKm2 = areaSqm / 1_000_000;
-      const cellLinearKm = Math.sqrt(Math.max(1e-6, cellAreaKm2));
-      const maxOffsetKm = Math.max(5, Math.min(24, cellLinearKm * 0.14 + 6 + normalizedPrice * 4));
-
-      particles.push({
-        id: `${cell.id}:${pass}`,
-        homeLng: initialLng,
-        homeLat: initialLat,
-        lng: initialLng,
-        lat: initialLat,
-        priceScore: normalizedPrice,
-        phase: seededNoise(particleSeed * 19 + 3) * Math.PI * 2,
-        speed: 0.45 + seededNoise(particleSeed * 23 + 5) * 0.7,
-        idleLngDeg: Math.max(0.000002, spanLng * idleFraction),
-        idleLatDeg: Math.max(0.000002, spanLat * idleFraction),
-        velocityLngDeg: 0,
-        velocityLatDeg: 0,
-        maxOffsetKm
-      });
-
-      particleSeed += 1;
-    }
-  }
-
-  return particles;
-};
-
 const getHoverLiftMeters = (zoom: number): number => {
   if (zoom < 3) {
-    return 220;
+    return 1400;
   }
   if (zoom < 5) {
-    return 320;
+    return 2200;
   }
   if (zoom < 7) {
-    return 480;
+    return 3400;
   }
   if (zoom < 9) {
-    return 680;
+    return 5200;
   }
   if (zoom < 11) {
-    return 900;
+    return 7200;
   }
-  return 1200;
+  return 10000;
 };
 
 const getHoverLiftScale = (zoom: number): number => {
   if (zoom < 3) {
-    return 0.35;
+    return 0.9;
   }
   if (zoom < 6) {
-    return 0.45;
+    return 1.4;
   }
   if (zoom < 9) {
-    return 0.55;
+    return 2.1;
   }
   if (zoom < 12) {
-    return 0.68;
+    return 2.9;
   }
-  return 0.78;
+  return 3.6;
 };
 
 const getMetersPerPixelAtLatitude = (lat: number, zoom: number): number => {
@@ -968,22 +828,6 @@ const getHoverInfluenceRadiusKm = (zoom: number, pointerRadiusKm: number, stepKm
   return Math.max(pointerRadiusKm * 1.25, stepKm * 2.4);
 };
 
-const getDotHoverRadiusPx = (zoom: number, viewportMin: number): number => {
-  if (zoom < 3) {
-    return Math.max(56, viewportMin * 0.06);
-  }
-  if (zoom < 6) {
-    return Math.max(64, viewportMin * 0.07);
-  }
-  if (zoom < 9) {
-    return Math.max(72, viewportMin * 0.075);
-  }
-  if (zoom < 12) {
-    return Math.max(80, viewportMin * 0.08);
-  }
-  return Math.max(92, viewportMin * 0.085);
-};
-
 const getHoverLevel = (stepDistance: number): number => {
   if (stepDistance <= 4.6) {
     return 0.75;
@@ -997,20 +841,23 @@ const getHoverLevel = (stepDistance: number): number => {
   return 0;
 };
 
-const buildHoverHeightExpression = (entries: Array<{ id: string; height: number }>): any => {
+const buildHoverHeightExpression = (
+  entries: Array<{ id: string; height: number }>
+): ExpressionSpecification | number => {
   if (entries.length === 0) {
     return 0;
   }
 
-  const expression: any[] = ["match", ["get", "gridId"]];
+  // "match" expression alternates keys and outputs, then a default.
+  const expression: unknown[] = ["match", ["get", "gridId"]];
   for (const entry of entries) {
     expression.push(entry.id, Number(entry.height.toFixed(2)));
   }
   expression.push(0);
-  return expression;
+  return expression as unknown as ExpressionSpecification;
 };
 
-const HOVER_RATE_COLOR_EXPRESSION: any = [
+const HOVER_RATE_COLOR_EXPRESSION: ExpressionSpecification = [
   "interpolate",
   ["linear"],
   ["coalesce", ["get", "colorScore"], 0.5],
@@ -1088,6 +935,44 @@ const buildGridSpatialIndex = (cells: GridCellMeta[]): Map<string, GridCellMeta[
   }
 
   return index;
+};
+
+// H6 — Incremental spatial index update: reuses an existing index,
+// removing cells that are no longer present and inserting new ones. Avoids
+// the full O(n) rebuild previously done on every pan/zoom.
+const updateGridSpatialIndex = (
+  previous: Map<string, GridCellMeta[]>,
+  removedIds: Set<string>,
+  added: GridCellMeta[]
+): Map<string, GridCellMeta[]> => {
+  if (removedIds.size === 0 && added.length === 0) {
+    return previous;
+  }
+
+  const next = new Map<string, GridCellMeta[]>();
+  if (removedIds.size > 0) {
+    for (const [key, bucket] of previous) {
+      const filtered = bucket.filter((cell) => !removedIds.has(cell.id));
+      if (filtered.length > 0) next.set(key, filtered);
+    }
+  } else {
+    // Shallow-clone buckets so callers can safely push without mutating the previous index.
+    for (const [key, bucket] of previous) next.set(key, bucket.slice());
+  }
+
+  for (const cell of added) {
+    const lngBucket = toGridLngBucket(cell.centerLng);
+    const latBucket = toGridLatBucket(cell.centerLat);
+    const key = getGridBucketKey(lngBucket, latBucket);
+    const bucketCells = next.get(key);
+    if (bucketCells) {
+      bucketCells.push(cell);
+    } else {
+      next.set(key, [cell]);
+    }
+  }
+
+  return next;
 };
 
 const queryNearbyGridCells = (
@@ -1444,7 +1329,13 @@ const createAdaptiveGridFeatureCollection = (
           continue;
         }
 
-        const gridId = `${currentLngStart.toFixed(5)}:${currentLatStart.toFixed(5)}:${stepDegrees.toFixed(5)}`;
+        // Quantise coordinates to 1e-7 deg integer keys (~1.1 cm at equator).
+        // Avoids float-string precision collisions of `toFixed(5)` while
+        // remaining well below the minimum grid step at max zoom.
+        const gridId =
+          `${Math.round(currentLngStart * 1e7)}:` +
+          `${Math.round(currentLatStart * 1e7)}:` +
+          `${Math.round(stepDegrees * 1e7)}`;
         const featureId = features.length + 1;
         const stats = computeWeightedRate(centerLng, centerLat, markets, blendRadiusKm);
         const cellAreaSqft = approximateCellAreaSqft(centerLat, stepDegrees);
@@ -1585,7 +1476,6 @@ const setBasemapMode = (map: maplibregl.Map, satelliteEnabled: boolean) => {
 
 export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMarket }: GlobeCanvasProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const dotCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const latestFeatureCollectionRef = useRef<GeoJSON.FeatureCollection<GeoJSON.Point>>({
@@ -1611,12 +1501,13 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
   const selectedMarketCurrencyRef = useRef<string>("USD");
   const hoverLiftTargetRef = useRef<HoverLiftTarget | null>(null);
   const lastHoverLiftSignatureRef = useRef<string>("none");
-  const dotParticlesRef = useRef<DotParticle[]>([]);
-  const dotFrameRef = useRef<number | null>(null);
-  const hoverPointerLiveRef = useRef<HoverPointerState | null>(null);
   const pendingHoverPointerRef = useRef<HoverPointerState | null>(null);
   const hoverFrameRef = useRef<number | null>(null);
   const lastPopupHtmlRef = useRef<string>("");
+  // C6 — guards concurrent `updateGridSource` invocations so overlapping
+  // moveend/zoomend/market-change triggers do not interleave.
+  const gridUpdateInFlightRef = useRef<boolean>(false);
+  const pendingGridRebuildRef = useRef<boolean>(false);
   const [satelliteMode, setSatelliteMode] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
 
@@ -1668,11 +1559,11 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       map = new maplibregl.Map({
         container: containerRef.current,
         style,
-        center: [0, 16],
-        zoom: 0.95,
-        pitch: 10,
-        minZoom: 0.8,
-        maxZoom: 16,
+        center: [10, 25],
+        zoom: 1.2,
+        pitch: 36,
+        minZoom: GRID_MIN_ZOOM,
+        maxZoom: SATELLITE_MAX_NATIVE_ZOOM,
         renderWorldCopies: false,
         attributionControl: false
       });
@@ -1695,7 +1586,6 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
     popupRef.current = new maplibregl.Popup({
       closeButton: false,
       closeOnClick: false,
-      className: "price-hover-popup",
       offset: [0, -86]
     });
 
@@ -1710,161 +1600,6 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       }
 
       map.setFilter("land-grid-hover", gridId ? ["==", ["get", "gridId"], gridId] : ["==", ["get", "gridId"], ""]);
-    };
-
-    const resizeDotCanvas = () => {
-      const dotCanvas = dotCanvasRef.current;
-      const container = containerRef.current;
-      if (!dotCanvas || !container) {
-        return;
-      }
-
-      const width = Math.max(1, Math.round(container.clientWidth));
-      const height = Math.max(1, Math.round(container.clientHeight));
-      const dpr = Math.max(1, Math.min(2, globalThis.devicePixelRatio || 1));
-      const nextWidth = Math.round(width * dpr);
-      const nextHeight = Math.round(height * dpr);
-      if (dotCanvas.width !== nextWidth || dotCanvas.height !== nextHeight) {
-        dotCanvas.width = nextWidth;
-        dotCanvas.height = nextHeight;
-      }
-      dotCanvas.style.width = `${width}px`;
-      dotCanvas.style.height = `${height}px`;
-      const context = dotCanvas.getContext("2d");
-      if (context) {
-        context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      }
-    };
-
-    let lastDotFrameTimeMs = globalThis.performance.now();
-    const renderDotField = () => {
-      dotFrameRef.current = globalThis.requestAnimationFrame(renderDotField);
-
-      const dotCanvas = dotCanvasRef.current;
-      if (!dotCanvas) {
-        return;
-      }
-      const context = dotCanvas.getContext("2d");
-      if (!context) {
-        return;
-      }
-
-      const width = Math.max(1, dotCanvas.clientWidth || Math.round(dotCanvas.width / Math.max(1, globalThis.devicePixelRatio || 1)));
-      const height = Math.max(1, dotCanvas.clientHeight || Math.round(dotCanvas.height / Math.max(1, globalThis.devicePixelRatio || 1)));
-      context.clearRect(0, 0, width, height);
-
-      if (!map.isStyleLoaded()) {
-        return;
-      }
-
-      const zoom = map.getZoom();
-      let particles = dotParticlesRef.current;
-      if (particles.length === 0) {
-        dotParticlesRef.current = createDotParticlesFromGridCells([], zoom);
-        particles = dotParticlesRef.current;
-        if (particles.length === 0) {
-          return;
-        }
-      }
-
-      const nowMs = globalThis.performance.now();
-      const dtSeconds = Math.max(0.008, Math.min(0.05, (nowMs - lastDotFrameTimeMs) / 1000 || 0.016));
-      lastDotFrameTimeMs = nowMs;
-      const timeSeconds = nowMs / 1000;
-      const hoverPointer = hoverPointerLiveRef.current;
-      const viewportMin = Math.max(1, Math.min(width, height));
-      const hoverRadiusPx = getDotHoverRadiusPx(zoom, viewportMin);
-      const referenceLat = hoverPointer?.lat ?? map.getCenter().lat;
-      const kmPerPixel = ((156543.03392 * Math.max(0.2, Math.cos(toRadians(referenceLat)))) / Math.pow(2, zoom)) / 1000;
-      const hoverInfluenceRadiusKm = Math.max(
-        45,
-        Math.min(DOT_PARTICLE_MAX_INTERACTION_RADIUS_KM, hoverRadiusPx * Math.max(0.01, kmPerPixel))
-      );
-      const damping = Math.pow(DOT_PARTICLE_DAMPING, dtSeconds * 60);
-
-      for (const particle of particles) {
-        const idleLngDelta = Math.cos(timeSeconds * particle.speed + particle.phase) * particle.idleLngDeg;
-        const idleLatDelta = Math.sin(timeSeconds * (particle.speed * 1.07) + particle.phase * 0.91) * particle.idleLatDeg;
-        const targetLng = normalizeLongitude(particle.homeLng + idleLngDelta);
-        const targetLat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.homeLat + idleLatDelta));
-
-        let accelerationLng = shortestLongitudeDeltaSigned(particle.lng, targetLng) * DOT_PARTICLE_SPRING_STIFFNESS;
-        let accelerationLat = (targetLat - particle.lat) * DOT_PARTICLE_SPRING_STIFFNESS;
-        let hoverInfluence = 0;
-
-        if (hoverPointer) {
-          const pointerDeltaLng = shortestLongitudeDeltaSigned(particle.lng, hoverPointer.lng);
-          const pointerDeltaLat = hoverPointer.lat - particle.lat;
-          const pointerDistanceKm = planarDistanceKm(particle.lng, particle.lat, hoverPointer.lng, hoverPointer.lat);
-          if (pointerDistanceKm <= hoverInfluenceRadiusKm) {
-            const radialStrength = 1 - pointerDistanceKm / Math.max(0.01, hoverInfluenceRadiusKm);
-            hoverInfluence = radialStrength * radialStrength;
-            const pointerMagnitude = Math.hypot(pointerDeltaLng, pointerDeltaLat);
-            if (pointerMagnitude > 1e-6) {
-              const pointerDirectionLng = pointerDeltaLng / pointerMagnitude;
-              const pointerDirectionLat = pointerDeltaLat / pointerMagnitude;
-              const pullStrength = DOT_PARTICLE_PULL_STRENGTH * hoverInfluence;
-              accelerationLng += pointerDirectionLng * pullStrength;
-              accelerationLat += pointerDirectionLat * pullStrength;
-
-              const swirlDirectionLng = -pointerDirectionLat;
-              const swirlDirectionLat = pointerDirectionLng;
-              const swirlStrength =
-                DOT_PARTICLE_SWIRL_STRENGTH * hoverInfluence * Math.sin(timeSeconds * (1.15 + particle.speed * 0.2) + particle.phase);
-              accelerationLng += swirlDirectionLng * swirlStrength;
-              accelerationLat += swirlDirectionLat * swirlStrength;
-            }
-          }
-        }
-
-        particle.velocityLngDeg = (particle.velocityLngDeg + accelerationLng * dtSeconds) * damping;
-        particle.velocityLatDeg = (particle.velocityLatDeg + accelerationLat * dtSeconds) * damping;
-
-        const velocityMagnitude = Math.hypot(particle.velocityLngDeg, particle.velocityLatDeg);
-        if (velocityMagnitude > DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC) {
-          const velocityScale = DOT_PARTICLE_MAX_SPEED_DEG_PER_SEC / velocityMagnitude;
-          particle.velocityLngDeg *= velocityScale;
-          particle.velocityLatDeg *= velocityScale;
-        }
-
-        particle.lng = normalizeLongitude(particle.lng + particle.velocityLngDeg * dtSeconds);
-        particle.lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.lat + particle.velocityLatDeg * dtSeconds));
-
-        const homeDistanceKm = planarDistanceKm(particle.lng, particle.lat, particle.homeLng, particle.homeLat);
-        if (homeDistanceKm > particle.maxOffsetKm) {
-          const homeToCurrentLng = shortestLongitudeDeltaSigned(particle.homeLng, particle.lng);
-          const homeToCurrentLat = particle.lat - particle.homeLat;
-          const clampRatio = particle.maxOffsetKm / Math.max(0.001, homeDistanceKm);
-          particle.lng = normalizeLongitude(particle.homeLng + homeToCurrentLng * clampRatio);
-          particle.lat = Math.max(MIN_RENDER_LAT, Math.min(MAX_RENDER_LAT, particle.homeLat + homeToCurrentLat * clampRatio));
-          particle.velocityLngDeg *= 0.75;
-          particle.velocityLatDeg *= 0.75;
-        }
-
-        const projected = map.project([particle.lng, particle.lat]);
-        if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
-          continue;
-        }
-        if (projected.x < -10 || projected.x > width + 10 || projected.y < -10 || projected.y > height + 10) {
-          continue;
-        }
-
-        const radius = 0.9 + particle.priceScore * 0.55 + hoverInfluence * 0.65;
-        const alpha = DOT_PARTICLE_BASE_ALPHA + particle.priceScore * 0.18 + hoverInfluence * DOT_PARTICLE_HOVER_ALPHA_BOOST;
-        context.fillStyle = getDotColor(particle.priceScore, alpha);
-        context.beginPath();
-        context.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
-        context.fill();
-      }
-    };
-
-    const startDotAnimation = () => {
-      resizeDotCanvas();
-      if (dotFrameRef.current !== null) {
-        return;
-      }
-      lastDotFrameTimeMs = globalThis.performance.now();
-      dotFrameRef.current = globalThis.requestAnimationFrame(renderDotField);
     };
 
     const clearHoverLiftState = () => {
@@ -2017,11 +1752,18 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
               : layer.level === 0.5
                 ? tierHeights.tier50
                 : tierHeights.tier25;
-        const nextFilter = layerIds.length > 0 ? (["in", ["get", "gridId"], ["literal", layerIds]] as any) : EMPTY_GRID_FILTER;
+        const nextFilter: FilterSpecification =
+          layerIds.length > 0
+            ? (["in", ["get", "gridId"], ["literal", layerIds]] as unknown as FilterSpecification)
+            : EMPTY_GRID_FILTER;
         const layerHeightExpression = buildHoverHeightExpression(layerHeights);
 
         map.setFilter(layer.id, nextFilter);
-        map.setPaintProperty(layer.id, "fill-extrusion-height", layerHeightExpression);
+        map.setPaintProperty(
+          layer.id,
+          "fill-extrusion-height",
+          layerHeightExpression as unknown as ExpressionSpecification
+        );
       }
     };
 
@@ -2073,54 +1815,114 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         return;
       }
 
-      const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
-      if (!gridSource) {
+      // C6 — guard against re-entrant invocations. If an update is already
+      // in-flight, mark a pending rebuild and bail. The finally block will
+      // reschedule once the current run completes.
+      if (gridUpdateInFlightRef.current) {
+        pendingGridRebuildRef.current = true;
         return;
       }
+      gridUpdateInFlightRef.current = true;
 
-      const zoom = map.getZoom();
-      const center = map.getCenter();
-      const stepDegrees = getGridStepDegrees(zoom);
-      if (shouldSkipGridRegeneration(zoom, center.lng, center.lat, stepDegrees)) {
-        return;
+      try {
+        const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
+        if (!gridSource) {
+          return;
+        }
+
+        const zoom = map.getZoom();
+        const center = map.getCenter();
+        const stepDegrees = getGridStepDegrees(zoom);
+        if (shouldSkipGridRegeneration(zoom, center.lng, center.lat, stepDegrees)) {
+          return;
+        }
+        const viewportHint = buildGridViewportHint(map, zoom);
+        const collection = createAdaptiveGridFeatureCollection(
+          map.getBounds(),
+          zoom,
+          landPolygonsRef.current,
+          landSpatialIndexRef.current,
+          latestMarketsRef.current,
+          latestPricePointsRef.current,
+          viewportHint
+        );
+
+        clearHoverLiftState();
+        lastHoverLiftSignatureRef.current = "";
+        const gridCells = extractGridCellsFromCollection(collection);
+        latestGridCellsRef.current = gridCells;
+
+        // H6 — compute diff vs previous cell map and update spatial index
+        // incrementally instead of rebuilding from scratch.
+        const previousCellById = gridCellByIdRef.current;
+        const nextCellById = new Map<string, GridCellMeta>();
+        for (const cell of gridCells) nextCellById.set(cell.id, cell);
+
+        const addedCells: GridCellMeta[] = [];
+        const removedIds = new Set<string>();
+        for (const cell of gridCells) {
+          if (!previousCellById.has(cell.id)) addedCells.push(cell);
+        }
+        for (const [id] of previousCellById) {
+          if (!nextCellById.has(id)) removedIds.add(id);
+        }
+
+        // C2 — viewport-based pruning. After the diff, drop any cached cells
+        // outside a 25% viewport buffer. Bounds-based eviction keeps the ref
+        // map bounded without needing an explicit size cap.
+        const bounds = map.getBounds();
+        const west = bounds.getWest();
+        const east = bounds.getEast();
+        const south = bounds.getSouth();
+        const north = bounds.getNorth();
+        const bufferLng = (east - west) * 0.25;
+        const bufferLat = (north - south) * 0.25;
+        const inViewport = (lng: number, lat: number): boolean =>
+          lng >= west - bufferLng &&
+          lng <= east + bufferLng &&
+          lat >= south - bufferLat &&
+          lat <= north + bufferLat;
+        for (const [id, cell] of nextCellById) {
+          if (!inViewport(cell.centerLng, cell.centerLat)) {
+            nextCellById.delete(id);
+            removedIds.add(id);
+          }
+        }
+
+        gridCellByIdRef.current = nextCellById;
+        gridSpatialIndexRef.current = updateGridSpatialIndex(
+          gridSpatialIndexRef.current,
+          removedIds,
+          addedCells
+        );
+        gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
+
+        gridSource.setData(collection);
+
+        if (hoverLiftTargetRef.current) {
+          scheduleHoverLiftUpdate({
+            ...hoverLiftTargetRef.current,
+            zoom
+          });
+        }
+
+        lastGridRenderSnapshotRef.current = {
+          centerLng: center.lng,
+          centerLat: center.lat,
+          zoom,
+          stepDegrees,
+          marketVersion: marketVersionRef.current,
+          viewportVersion: viewportVersionRef.current
+        };
+      } finally {
+        gridUpdateInFlightRef.current = false;
+        if (pendingGridRebuildRef.current) {
+          pendingGridRebuildRef.current = false;
+          // Reschedule via the debounce path to coalesce any further events
+          // that may have fired while the previous run was in progress.
+          scheduleGridUpdate();
+        }
       }
-      const viewportHint = buildGridViewportHint(map, zoom);
-      const collection = createAdaptiveGridFeatureCollection(
-        map.getBounds(),
-        zoom,
-        landPolygonsRef.current,
-        landSpatialIndexRef.current,
-        latestMarketsRef.current,
-        latestPricePointsRef.current,
-        viewportHint
-      );
-
-      clearHoverLiftState();
-      lastHoverLiftSignatureRef.current = "";
-      const gridCells = extractGridCellsFromCollection(collection);
-      latestGridCellsRef.current = gridCells;
-      gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
-      gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
-      gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
-      dotParticlesRef.current = createDotParticlesFromGridCells(gridCells, zoom);
-
-      gridSource.setData(collection);
-
-      if (hoverLiftTargetRef.current) {
-        scheduleHoverLiftUpdate({
-          ...hoverLiftTargetRef.current,
-          zoom
-        });
-      }
-
-      lastGridRenderSnapshotRef.current = {
-        centerLng: center.lng,
-        centerLat: center.lat,
-        zoom,
-        stepDegrees,
-        marketVersion: marketVersionRef.current,
-        viewportVersion: viewportVersionRef.current
-      };
     };
 
     const queueGridFrame = () => {
@@ -2172,37 +1974,56 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       updateGridSource();
     };
 
-    startDotAnimation();
+    const INIT_RETRY_DELAYS_MS = [500, 1000, 2000] as const;
+    const sleep = (ms: number) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+
+    const loadInitialDataOnce = async () => {
+      // Rely on standard HTTP cache semantics (ETag / Cache-Control) rather
+      // than `force-cache`, so refreshed geojson assets are picked up without
+      // a hard reload.
+      const [landResponse, cityResponse] = await Promise.all([
+        fetch(LANDMASS_GEOJSON_URL, { cache: "default" }),
+        fetch(MAJOR_CITIES_GEOJSON_URL, { cache: "default" })
+      ]);
+
+      if (!landResponse.ok) {
+        throw new Error(`Unable to load land geometry (${landResponse.status})`);
+      }
+      if (!cityResponse.ok) {
+        throw new Error(`Unable to load city labels (${cityResponse.status})`);
+      }
+
+      const landPayload = (await landResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
+      const cityPayload = (await cityResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
+
+      landPolygonsRef.current = extractLandPolygons(landPayload);
+      landSpatialIndexRef.current = buildLandSpatialIndex(landPolygonsRef.current);
+      majorCitiesRef.current = extractMajorCities(cityPayload);
+      const oceanMaskSource = map.getSource("ocean-mask") as GeoJSONSource | undefined;
+      if (oceanMaskSource) {
+        oceanMaskSource.setData(createOceanMaskFeatureCollection(landPolygonsRef.current));
+      }
+      flushGridUpdate();
+    };
 
     const initializeData = async () => {
-      try {
-        const [landResponse, cityResponse] = await Promise.all([
-          fetch(LANDMASS_GEOJSON_URL, { cache: "force-cache" }),
-          fetch(MAJOR_CITIES_GEOJSON_URL, { cache: "force-cache" })
-        ]);
-
-        if (!landResponse.ok) {
-          throw new Error(`Unable to load land geometry (${landResponse.status})`);
+      // Retry with exponential backoff. Clears the error state on success so
+      // a failed-then-recovered load does not leave a stale banner behind.
+      for (let attempt = 0; attempt < INIT_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          await loadInitialDataOnce();
+          setMapError(null);
+          return;
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error("[globe-canvas] init failure attempt=" + (attempt + 1), error instanceof Error ? error.message : error);
+          if (attempt === INIT_RETRY_DELAYS_MS.length - 1) {
+            const message = error instanceof Error ? error.message : "Failed to initialize grid data";
+            setMapError(message);
+            return;
+          }
+          await sleep(INIT_RETRY_DELAYS_MS[attempt] ?? 1000);
         }
-
-        if (!cityResponse.ok) {
-          throw new Error(`Unable to load city labels (${cityResponse.status})`);
-        }
-
-        const landPayload = (await landResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
-        const cityPayload = (await cityResponse.json()) as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
-
-        landPolygonsRef.current = extractLandPolygons(landPayload);
-        landSpatialIndexRef.current = buildLandSpatialIndex(landPolygonsRef.current);
-        majorCitiesRef.current = extractMajorCities(cityPayload);
-        const oceanMaskSource = map.getSource("ocean-mask") as GeoJSONSource | undefined;
-        if (oceanMaskSource) {
-          oceanMaskSource.setData(createOceanMaskFeatureCollection(landPolygonsRef.current));
-        }
-        flushGridUpdate();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to initialize grid data";
-        setMapError(message);
       }
     };
 
@@ -2214,22 +2035,25 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
       map.addSource("satellite-imagery", {
         type: "raster",
-        tiles: [SATELLITE_TILE_URL],
+        tiles: SATELLITE_TILE_URLS,
         tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM,
         attribution: SATELLITE_ATTRIBUTION
       });
 
       map.addSource("satellite-reference-labels", {
         type: "raster",
-        tiles: [SATELLITE_LABELS_TILE_URL],
+        tiles: SATELLITE_LABELS_TILE_URLS,
         tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM,
         attribution: SATELLITE_REFERENCE_ATTRIBUTION
       });
 
       map.addSource("satellite-reference-roads", {
         type: "raster",
-        tiles: [SATELLITE_ROADS_TILE_URL],
-        tileSize: 256
+        tiles: SATELLITE_ROADS_TILE_URLS,
+        tileSize: 256,
+        maxzoom: SATELLITE_MAX_NATIVE_ZOOM
       });
 
       map.addLayer({
@@ -2326,51 +2150,7 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         data: emptyOceanMaskCollection
       });
 
-      for (const layer of HOVER_EXTRUSION_LAYERS) {
-        map.addLayer({
-          id: layer.id,
-          type: "fill-extrusion",
-          source: "land-grid",
-          filter: EMPTY_GRID_FILTER,
-          paint: {
-            "fill-extrusion-color": HOVER_RATE_COLOR_EXPRESSION,
-            "fill-extrusion-base": 0,
-            "fill-extrusion-height": 0,
-            "fill-extrusion-opacity": 0.16,
-            "fill-extrusion-base-transition": {
-              duration: 36,
-              delay: 0
-            },
-            "fill-extrusion-height-transition": {
-              duration: 36,
-              delay: 0
-            }
-          }
-        });
-      }
-
-      map.addLayer({
-        id: "land-grid-line",
-        type: "line",
-        source: "land-grid",
-        paint: {
-          "line-color": "rgba(3, 19, 39, 0.85)",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.12, 7, 0.35, 12, 0.72, 16, 1.05],
-          "line-opacity": 0
-        }
-      });
-
-      map.addLayer({
-        id: "land-grid-hover",
-        type: "line",
-        source: "land-grid",
-        filter: ["==", ["get", "gridId"], ""],
-        paint: {
-          "line-color": "#f8fafc",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 1, 0.7, 8, 1.3, 12, 2],
-          "line-opacity": 0.95
-        }
-      });
+      // Heatmap fill-extrusion layers removed — replaced by DotGrid overlay
 
       map.addLayer({
         id: "ocean-mask-fill",
@@ -2537,13 +2317,18 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         const activeGridId = activeCell?.id ?? null;
 
         setHoverGridId(activeGridId);
-        hoverPointerLiveRef.current = {
-          x: pointer.x,
-          y: pointer.y,
-          lng: pointer.lng,
-          lat: pointer.lat
-        };
-        scheduleHoverLiftUpdate(null);
+        scheduleHoverLiftUpdate(
+          hasGridCell
+            ? {
+                lng: pointer.lng,
+                lat: pointer.lat,
+                zoom,
+                pointerX: pointer.x,
+                pointerY: pointer.y,
+                ...(activeGridId ? { centerGridId: activeGridId } : {})
+              }
+            : null
+        );
         map.getCanvas().style.cursor = hasGridCell ? "crosshair" : "";
 
         const nearestCity = findNearestMajorCity(pointer.lng, pointer.lat, majorCitiesRef.current);
@@ -2551,13 +2336,30 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           ? `${nearestCity.name}${nearestCity.country ? `, ${nearestCity.country}` : ""} (${nearestCity.distanceKm.toFixed(0)} km)`
           : "Unknown";
 
-        let popupHtml = "";
+        // H5 — build popup content as DOM nodes with textContent so all data
+        // fields are automatically escaped. `setDOMContent` replaces the
+        // previous string-concatenated HTML path and removes the XSS vector.
+        // We still use `popupSignature` to skip identical renders.
+        let popupSignature = "";
+        let popupContent: HTMLElement;
+        const rootStyle = "font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;";
+
         if (!hasGridCell) {
-          popupHtml =
-            `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
-              `<strong style="display:block; margin-bottom:4px;">Nearest city: ${nearestCityLabel}</strong>` +
-              `<span style="color:#94a3b8;">No land grid cell under cursor at this location.</span>` +
-              `</div>`;
+          popupSignature = `nocell:${nearestCityLabel}`;
+          const root = document.createElement("div");
+          root.setAttribute("style", rootStyle);
+
+          const heading = document.createElement("strong");
+          heading.setAttribute("style", "display:block; margin-bottom:4px;");
+          heading.textContent = `Nearest city: ${nearestCityLabel}`;
+          root.appendChild(heading);
+
+          const note = document.createElement("span");
+          note.setAttribute("style", "color:#94a3b8;");
+          note.textContent = "No land grid cell under cursor at this location.";
+          root.appendChild(note);
+
+          popupContent = root;
         } else {
           const avgPriceUsdPerSqft = Number(activeCell?.avgPricePerSqft ?? 0);
           const contributorCount = Number(activeCell?.contributorCount ?? 0);
@@ -2569,30 +2371,67 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           const rateConfidence = activeCell?.rateConfidence ?? "inferred";
           const selectedCurrency = selectedMarketCurrencyRef.current;
           const avgPriceLocalPerSqft = fromUsd(avgPriceUsdPerSqft, selectedCurrency);
-          const sourceLabel = nearestPointSource === "listing_observation" ? "Nearest observed parcel" : "Nearest market benchmark";
+          const sourceLabel =
+            nearestPointSource === "listing_observation"
+              ? "Nearest observed parcel"
+              : "Nearest market benchmark";
           const basisLabel =
             rateConfidence === "local"
               ? "Local observations"
               : rateConfidence === "regional"
                 ? "Regional interpolation"
                 : "Long-range interpolation";
-          popupHtml =
-            `<div style="font: 12px 'Space Grotesk', sans-serif; color: #e2e8f0;">` +
-              `<strong style="display:block; margin-bottom:4px;">Nearest city: ${nearestCityLabel}</strong>` +
-              `<span style="color:#cbd5e1;">Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft</span><br/>` +
-              `<span style="color:#94a3b8;">USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft</span><br/>` +
-              `<span style="color:#94a3b8;">Basis: ${basisLabel}</span><br/>` +
-              `<span style="color:#94a3b8;">${sourceLabel}: ${nearestPointLabel || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)</span><br/>` +
-              `<span style="color:#cbd5e1;">Contributors: ${contributorCount}</span><br/>` +
-              `<span style="color:#94a3b8;">Grid step: ${stepDegrees.toFixed(5)} deg</span><br/>` +
-              `<span style="color:#94a3b8;">Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft</span>` +
-              `</div>`;
+
+          popupSignature =
+            `cell:${activeCell?.id ?? ""}:${avgPriceUsdPerSqft.toFixed(2)}:${selectedCurrency}:` +
+            `${contributorCount}:${nearestCityLabel}:${rateConfidence}`;
+
+          const root = document.createElement("div");
+          root.setAttribute("style", rootStyle);
+
+          const addLine = (text: string, color: string, asBlock = false) => {
+            const span = document.createElement("span");
+            span.setAttribute("style", `color:${color};`);
+            span.textContent = text;
+            root.appendChild(span);
+            if (asBlock) root.appendChild(document.createElement("br"));
+          };
+
+          const heading = document.createElement("strong");
+          heading.setAttribute("style", "display:block; margin-bottom:4px;");
+          heading.textContent = `Nearest city: ${nearestCityLabel}`;
+          root.appendChild(heading);
+
+          addLine(
+            `Blended land rate: ${formatPopupCurrency(avgPriceLocalPerSqft, selectedCurrency)}/sqft`,
+            "#cbd5e1",
+            true
+          );
+          addLine(
+            `USD-equivalent: ${formatPopupCurrency(avgPriceUsdPerSqft, "USD")}/sqft`,
+            "#94a3b8",
+            true
+          );
+          addLine(`Basis: ${basisLabel}`, "#94a3b8", true);
+          addLine(
+            `${sourceLabel}: ${nearestPointLabel || "Unknown"} (${nearestMarketDistanceKm.toFixed(0)} km)`,
+            "#94a3b8",
+            true
+          );
+          addLine(`Contributors: ${contributorCount}`, "#cbd5e1", true);
+          addLine(`Grid step: ${stepDegrees.toFixed(5)} deg`, "#94a3b8", true);
+          addLine(
+            `Approx cell area: ${sqftNumberFormatter.format(areaSqft)} sqft`,
+            "#94a3b8"
+          );
+
+          popupContent = root;
         }
 
         popup.setLngLat([pointer.lng, pointer.lat]);
-        if (popupHtml !== lastPopupHtmlRef.current) {
-          popup.setHTML(popupHtml);
-          lastPopupHtmlRef.current = popupHtml;
+        if (popupSignature !== lastPopupHtmlRef.current) {
+          popup.setDOMContent(popupContent);
+          lastPopupHtmlRef.current = popupSignature;
         }
         if (!popup.isOpen()) {
           popup.addTo(map);
@@ -2658,7 +2497,6 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
           hoverFrameRef.current = null;
         }
         setHoverGridId(null);
-        hoverPointerLiveRef.current = null;
         scheduleHoverLiftUpdate(null);
         map.getCanvas().style.cursor = "";
       };
@@ -2677,7 +2515,6 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
     const handleResize = () => {
       map.resize();
-      resizeDotCanvas();
       viewportVersionRef.current += 1;
       lastGridRenderSnapshotRef.current = null;
       scheduleGridUpdate();
@@ -2701,17 +2538,11 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         globalThis.cancelAnimationFrame(hoverFrameRef.current);
         hoverFrameRef.current = null;
       }
-      if (dotFrameRef.current !== null) {
-        globalThis.cancelAnimationFrame(dotFrameRef.current);
-        dotFrameRef.current = null;
-      }
       pendingHoverPointerRef.current = null;
-      hoverPointerLiveRef.current = null;
       lastPopupHtmlRef.current = "";
       lastGridRenderSnapshotRef.current = null;
       hoverLiftTargetRef.current = null;
       latestGridCellsRef.current = [];
-      dotParticlesRef.current = [];
       gridCellByIdRef.current.clear();
       gridSpatialIndexRef.current.clear();
       gridStepDegreesRef.current = 0;
@@ -2752,6 +2583,57 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
       const marketSource = map.getSource("markets") as GeoJSONSource | undefined;
       marketSource?.setData(marketFeatureCollection);
 
+      // Suppress duplicate world-city labels where a market label already
+      // renders the same place. Previously "Dubai" appeared twice at low zoom
+      // because both place-labels-major and market-labels collision-avoided
+      // each other via variable anchors. Now we filter the major-city layer
+      // to exclude any name that matches a market.
+      const marketNameSet = new Set<string>();
+      for (const market of markets) {
+        marketNameSet.add(market.name);
+      }
+      const marketNameList = Array.from(marketNameSet);
+      const placeLabelExclusion: ExpressionSpecification = [
+        "!",
+        [
+          "in",
+          ["coalesce", ["get", "nameascii"], ["get", "name"], ""],
+          ["literal", marketNameList]
+        ]
+      ];
+      const placeLabelFilters: Array<[string, FilterSpecification]> = [
+        [
+          "place-labels-major",
+          [
+            "all",
+            ["<=", ["coalesce", ["get", "min_zoom"], 7], 3.7],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ],
+        [
+          "place-labels-regional",
+          [
+            "all",
+            [">", ["coalesce", ["get", "min_zoom"], 7], 3.7],
+            ["<=", ["coalesce", ["get", "min_zoom"], 7], 5.6],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ],
+        [
+          "place-labels-local",
+          [
+            "all",
+            [">", ["coalesce", ["get", "min_zoom"], 7], 5.6],
+            placeLabelExclusion
+          ] as unknown as FilterSpecification
+        ]
+      ];
+      for (const [layerId, filter] of placeLabelFilters) {
+        if (map.getLayer(layerId)) {
+          map.setFilter(layerId, filter);
+        }
+      }
+
       const gridSource = map.getSource("land-grid") as GeoJSONSource | undefined;
       if (gridSource && landPolygonsRef.current.length > 0) {
         const zoom = map.getZoom();
@@ -2767,10 +2649,48 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
         );
         const gridCells = extractGridCellsFromCollection(collection);
         latestGridCellsRef.current = gridCells;
-        gridCellByIdRef.current = new Map(gridCells.map((cell) => [cell.id, cell]));
-        gridSpatialIndexRef.current = buildGridSpatialIndex(gridCells);
+
+        // Incremental index update + viewport pruning, same as the
+        // updateGridSource path.
+        const previousCellById = gridCellByIdRef.current;
+        const nextCellById = new Map<string, GridCellMeta>();
+        for (const cell of gridCells) nextCellById.set(cell.id, cell);
+
+        const addedCells: GridCellMeta[] = [];
+        const removedIds = new Set<string>();
+        for (const cell of gridCells) {
+          if (!previousCellById.has(cell.id)) addedCells.push(cell);
+        }
+        for (const [id] of previousCellById) {
+          if (!nextCellById.has(id)) removedIds.add(id);
+        }
+
+        const bounds = map.getBounds();
+        const west = bounds.getWest();
+        const east = bounds.getEast();
+        const south = bounds.getSouth();
+        const north = bounds.getNorth();
+        const bufferLng = (east - west) * 0.25;
+        const bufferLat = (north - south) * 0.25;
+        const inViewport = (lng: number, lat: number): boolean =>
+          lng >= west - bufferLng &&
+          lng <= east + bufferLng &&
+          lat >= south - bufferLat &&
+          lat <= north + bufferLat;
+        for (const [id, cell] of nextCellById) {
+          if (!inViewport(cell.centerLng, cell.centerLat)) {
+            nextCellById.delete(id);
+            removedIds.add(id);
+          }
+        }
+
+        gridCellByIdRef.current = nextCellById;
+        gridSpatialIndexRef.current = updateGridSpatialIndex(
+          gridSpatialIndexRef.current,
+          removedIds,
+          addedCells
+        );
         gridStepDegreesRef.current = gridCells[0]?.stepDegrees ?? 0;
-        dotParticlesRef.current = createDotParticlesFromGridCells(gridCells, zoom);
 
         hoverLiftTargetRef.current = null;
         for (const layerId of HOVER_EXTRUSION_LAYER_IDS) {
@@ -2814,56 +2734,49 @@ export const GlobeCanvas = ({ markets, pricePoints, selectedMarketId, onSelectMa
 
     mapRef.current.flyTo({
       center: [selected.center.lng, selected.center.lat],
-      zoom: Math.max(mapRef.current.getZoom(), 2.2),
-      pitch: Math.max(mapRef.current.getPitch(), 18),
-      offset: [0, -12],
+      zoom: Math.max(mapRef.current.getZoom(), 3),
+      pitch: Math.max(mapRef.current.getPitch(), 44),
       speed: 0.6
     });
   }, [markets, selectedMarketId]);
 
   return (
     <div style={{ height: "100%", width: "100%", position: "relative" }}>
-      <div
-        ref={containerRef}
-        style={{ height: "100%", width: "100%" }}
-        role="application"
-        aria-label="Interactive land intelligence globe map. Use mouse or touch to pan and zoom. Click a market region to view details."
-        tabIndex={0}
-      />
-      <canvas
-        ref={dotCanvasRef}
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          pointerEvents: "none",
-          zIndex: 2
-        }}
-      />
+      <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
       <button
         type="button"
         onClick={() => setSatelliteMode((current) => !current)}
         style={{
           position: "absolute",
-          top: 12,
-          left: 12,
+          bottom: 16,
+          left: 16,
           zIndex: 4,
-          border: "1px solid rgba(148, 163, 184, 0.55)",
-          borderRadius: 10,
-          padding: "7px 12px",
-          fontSize: 12,
-          fontWeight: 600,
-          letterSpacing: "0.01em",
-          color: "#f8fafc",
-          background: satelliteMode ? "rgba(15, 23, 42, 0.9)" : "rgba(2, 6, 23, 0.84)",
-          backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          borderRadius: 8,
+          padding: "6px 10px",
+          fontSize: 11,
+          fontWeight: 500,
+          letterSpacing: "0.02em",
+          color: "rgba(248,250,252,0.85)",
+          background: "rgba(10, 10, 15, 0.82)",
+          backdropFilter: "blur(12px)",
           cursor: "pointer",
-          boxShadow: "0 8px 18px rgba(2, 6, 23, 0.35)"
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          transition: "all 150ms ease"
         }}
+        aria-label={satelliteMode ? "Switch to map mode" : "Switch to satellite mode"}
       >
-        {satelliteMode ? "Map Mode" : "Satellite Mode"}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+          {satelliteMode ? (
+            <>{/* Map icon */}<rect x="1" y="1" width="12" height="12" rx="2" /><path d="M1 5l4 3 3-2 5 4" /><circle cx="10" cy="3.5" r="1.2" fill="currentColor" /></>
+          ) : (
+            <>{/* Satellite icon */}<circle cx="7" cy="7" r="5.5" /><path d="M7 1.5v11" /><path d="M1.5 7h11" /><path d="M2 4c1.5.5 3.5.8 5 .8s3.5-.3 5-.8" /><path d="M2 10c1.5-.5 3.5-.8 5-.8s3.5.3 5 .8" /></>
+          )}
+        </svg>
+        {satelliteMode ? "Map" : "Satellite"}
       </button>
       {mapError ? (
         <div

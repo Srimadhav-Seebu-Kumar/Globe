@@ -117,7 +117,6 @@ export function AppShell({
   drawerState,
   onCloseDrawer
 }: AppShellProps) {
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -135,7 +134,7 @@ export function AppShell({
     if (mobileNavOpen) setMobileNavOpen(false);
   }, [activeView]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const sidebarWidth = isMobile ? "0px" : sidebarExpanded ? "var(--sidebar-width-expanded)" : "var(--sidebar-width-collapsed)";
+  const sidebarWidth = isMobile ? "0px" : "var(--sidebar-width-expanded)";
 
   const navItems = [
     { id: "globe" as ActiveView, label: "Globe", icon: <GlobeNavIcon /> },
@@ -266,14 +265,25 @@ export function AppShell({
           marginLeft: sidebarWidth,
           marginTop: "var(--top-bar-height)",
           marginBottom: isMobile ? "56px" : "var(--bottom-panel-height-collapsed)",
-          transition: "margin-left 300ms var(--ease-in-out)"
+          transition: "margin-left 300ms var(--ease-in-out)",
+          height: isMobile
+            ? "calc(100vh - var(--top-bar-height) - 56px)"
+            : "calc(100vh - var(--top-bar-height) - var(--bottom-panel-height-collapsed))"
         }}
-        className={`overflow-hidden relative ${isMobile
-          ? "h-[calc(100vh-var(--top-bar-height)-56px)]"
-          : "h-[calc(100vh-var(--top-bar-height)-var(--bottom-panel-height-collapsed))]"
-        }`}
+        className="overflow-hidden relative"
       >
-        {children}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={activeView}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="h-full w-full"
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       {/* Mobile bottom tab bar */}

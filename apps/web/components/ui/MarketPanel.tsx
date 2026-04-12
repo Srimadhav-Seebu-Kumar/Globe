@@ -12,6 +12,9 @@ import { CoverageBadge } from "./CoverageBadge";
 import { TrendChart } from "./TrendChart";
 import { Skeleton, SkeletonText } from "./Skeleton";
 import { Button } from "./Button";
+import { CountUp } from "./bits/CountUp";
+import { GradientText } from "./bits/GradientText";
+import { SQM_TO_SQFT } from "../../lib/constants";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -30,6 +33,9 @@ interface MarketStats {
   benchmarkPricePerSqm: number;
   benchmarkCurrency: string;
   updatedAt: string;
+  priceChangeYoy?: number;
+  avgDaysOnMarket?: number;
+  populationM?: number;
 }
 
 interface MarketListing {
@@ -75,13 +81,21 @@ type TabId = "overview" | "listings" | "trends" | "alerts";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function formatCurrency(amount: number, code: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: code,
-    notation: amount >= 1_000_000 ? "compact" : "standard",
-    maximumFractionDigits: amount >= 1_000_000 ? 1 : 0
-  }).format(amount);
+function formatCurrency(amount: number, code: string, locale = "en-US"): string {
+  // Intl.NumberFormat throws on unknown currency codes — fall back to a plain
+  // "<CODE> <number>" string so a single bad market entry can't crash the panel.
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: code,
+      notation: amount >= 1_000_000 ? "compact" : "standard",
+      maximumFractionDigits: amount >= 1_000_000 ? 1 : 0
+    }).format(amount);
+  } catch {
+    return `${code} ${amount.toLocaleString(locale, {
+      maximumFractionDigits: amount >= 1_000_000 ? 1 : 0
+    })}`;
+  }
 }
 
 function formatDateTime(iso: string): string {
@@ -99,7 +113,7 @@ const alertRuleLabels: Record<MarketAlert["ruleType"], string> = {
 
 // ── Sub-components ───────────────────────────────────────────────
 
-function Tab({ id, label, active, badge, onClick }: {
+function Tab({ id: _id, label, active, badge, onClick }: {
   id: TabId; label: string; active: boolean; badge?: number | undefined; onClick: () => void;
 }) {
   return (
@@ -107,10 +121,10 @@ function Tab({ id, label, active, badge, onClick }: {
       onClick={onClick}
       className={[
         "relative flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium transition-colors",
-        "border-b-2 -mb-px",
+        "-mb-px",
         active
-          ? "text-[var(--text-primary)] border-[var(--accent-blue)]"
-          : "text-[var(--text-tertiary)] border-transparent hover:text-[var(--text-secondary)] hover:border-[var(--border-default)]"
+          ? "text-[var(--text-primary)]"
+          : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
       ].join(" ")}
       aria-selected={active}
       role="tab"
@@ -119,10 +133,19 @@ function Tab({ id, label, active, badge, onClick }: {
       {badge !== undefined && badge > 0 && (
         <span className={[
           "h-4 min-w-[16px] px-1 rounded-full text-[10px] font-semibold tabular-nums flex items-center justify-center",
-          active ? "bg-[rgba(59,130,246,0.2)] text-[var(--accent-blue)]" : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)]"
+          active ? "bg-[rgba(59,130,246,0.15)] text-[var(--accent-primary)]" : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)]"
         ].join(" ")}>
           {badge}
         </span>
+      )}
+      {/* Sliding underline indicator */}
+      {active && (
+        <motion.span
+          layoutId="market-tab-indicator"
+          className="absolute bottom-0 left-0 right-0 h-[2px] rounded-full"
+          style={{ background: "var(--accent-primary)" }}
+          transition={{ type: "spring", stiffness: 350, damping: 30 }}
+        />
       )}
     </button>
   );
@@ -255,8 +278,10 @@ export function MarketPanel({
       <div className="px-4 pt-4 pb-0 shrink-0">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold text-[var(--text-primary)] leading-tight truncate">
-              {market.name}
+            <h2 className="text-[15px] font-semibold leading-tight truncate">
+              <GradientText colors={["#60a5fa", "#a78bfa", "#38bdf8"]} animationSpeed={8}>
+                {market.name}
+              </GradientText>
             </h2>
             <p className="text-[12px] text-[var(--text-tertiary)] mt-0.5">
               {market.region} · {market.timezone}
@@ -312,17 +337,44 @@ export function MarketPanel({
                 />
                 <StatCard
                   label="Active Listings"
-                  value={market.activeListings.toLocaleString()}
+                  value={market.activeListings}
                 />
                 <StatCard
                   label="Closed Deals"
-                  value={market.closedTransactions.toLocaleString()}
+                  value={market.closedTransactions}
                 />
                 <StatCard
                   label="Benchmark /sqm"
                   value={formatCurrency(usdBenchmark, market.benchmarkCurrency)}
                 />
               </div>
+
+              {/* Market context row */}
+              {(market.priceChangeYoy != null || market.avgDaysOnMarket != null || market.populationM != null) && (
+                <div className="flex flex-wrap gap-2">
+                  {market.priceChangeYoy != null && (
+                    <span className={[
+                      "inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold",
+                      market.priceChangeYoy >= 0
+                        ? "bg-[rgba(34,197,94,0.12)] text-[var(--accent-success)]"
+                        : "bg-[rgba(239,68,68,0.12)] text-[var(--accent-danger)]"
+                    ].join(" ")}>
+                      {market.priceChangeYoy >= 0 ? "▲" : "▼"}{" "}
+                      <CountUp to={Math.abs(market.priceChangeYoy)} decimals={1} duration={1.2} />% YoY
+                    </span>
+                  )}
+                  {market.avgDaysOnMarket != null && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                      <CountUp to={market.avgDaysOnMarket} duration={1.0} />d avg on market
+                    </span>
+                  )}
+                  {market.populationM != null && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)]">
+                      <CountUp to={market.populationM} decimals={1} duration={1.0} />M pop.
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Benchmark detail */}
               <div className="p-3 rounded-[var(--radius-md)] bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
@@ -339,7 +391,7 @@ export function MarketPanel({
                   <div className="flex items-center justify-between">
                     <span className="text-[12px] text-[var(--text-secondary)]">Local /sqft</span>
                     <span className="text-[12px] font-semibold text-[var(--text-primary)] font-mono tabular-nums">
-                      {formatCurrency(market.benchmarkPricePerSqm / 10.764, market.benchmarkCurrency)}
+                      {formatCurrency(market.benchmarkPricePerSqm / SQM_TO_SQFT, market.benchmarkCurrency)}
                     </span>
                   </div>
                 </div>

@@ -2,24 +2,32 @@
 @import "maplibre-gl/dist/maplibre-gl.css";
 @import "../../../packages/ui/tokens/index.css";
 
+/* Ensure Tailwind v4 scans all component files for class usage */
+@source "../components";
+@source "../../../packages/ui";
+
 /* ── Tailwind Theme Overrides ────────────────────── */
 @theme {
-  --color-bg-base: #0A0E17;
-  --color-bg-surface: #111827;
-  --color-bg-elevated: #1A2332;
-  --color-border-subtle: #1E293B;
-  --color-border-default: #334155;
-  --color-text-primary: #F1F5F9;
-  --color-text-secondary: #94A3B8;
-  --color-text-tertiary: #64748B;
-  --color-accent-primary: #3B82F6;
-  --color-accent-success: #10B981;
-  --color-accent-warning: #F59E0B;
-  --color-accent-danger: #EF4444;
-  --color-price-ask: #3B82F6;
-  --color-price-closed: #10B981;
-  --color-price-estimate: #F59E0B;
-  --color-price-broker-verified: #8B5CF6;
+  --color-bg-void:    #09090c;
+  --color-bg-base:    #0d0e13;
+  --color-bg-surface: #131520;
+  --color-bg-elevated:#1a1c28;
+  --color-bg-overlay: #20222f;
+  --color-border-subtle:  rgba(255,255,255,0.055);
+  --color-border-default: rgba(255,255,255,0.09);
+  --color-text-primary:   #eef0f6;
+  --color-text-secondary: #7a869e;
+  --color-text-tertiary:  #48516a;
+  --color-accent-primary:  #c9a96e;   /* warm gold — luxury feel */
+  --color-accent-success:  oklch(68% 0.20 145);
+  --color-accent-warning:  oklch(75% 0.18 75);
+  --color-accent-danger:   oklch(62% 0.22 25);
+  --color-accent-purple:   oklch(68% 0.22 295);
+  --color-accent-cyan:     oklch(75% 0.16 200);
+  --color-price-ask:             oklch(65% 0.22 250);
+  --color-price-closed:          oklch(68% 0.20 145);
+  --color-price-estimate:        oklch(75% 0.18 75);
+  --color-price-broker-verified: oklch(68% 0.22 295);
   --font-family-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
   --font-family-mono: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
 }
@@ -30,7 +38,7 @@
 }
 
 .maplibregl-ctrl-attrib {
-  background: rgba(10, 14, 23, 0.7) !important;
+  background: rgba(5, 5, 7, 0.75) !important;
   color: var(--text-tertiary) !important;
   font-size: 10px !important;
 }
@@ -46,17 +54,84 @@
   overflow: hidden;
 }
 
-/* ── Glass panel ──────────────────────────────────── */
+/* ── Glass panels — Glassmorphism 2.0 ────────────── */
 .glass {
-  background: var(--bg-overlay);
+  background: rgba(17, 17, 24, 0.72);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.glass-heavy {
+  background: rgba(10, 10, 15, 0.88);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 40px rgba(0, 0, 0, 0.6);
+}
+
+.glass-surface {
+  background: linear-gradient(145deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%),
+              rgba(17, 17, 24, 0.80);
+  backdrop-filter: blur(12px) saturate(130%);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ── Noise texture overlay ────────────────────────── */
+/* Apply as a child ::before or add .noise class */
+.noise {
+  position: relative;
+}
+.noise::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 120px 120px;
 }
 
 /* ── Data number formatting ───────────────────────── */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Typography display utilities ─────────────────── */
+.gradient-text {
+  background: var(--gradient-hero);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+  -webkit-font-smoothing: antialiased;
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: var(--tracking-tight);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv01", "cv02", "cv03";
+}
+
+.hero-text {
+  font-size: var(--text-hero);
+  font-family: var(--font-display);
+  font-weight: var(--weight-extrabold);
+  letter-spacing: var(--tracking-tighter);
+  line-height: var(--leading-tight);
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── Ticker scroll animation ────────────────────── */

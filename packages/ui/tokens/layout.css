@@ -15,8 +15,8 @@
 
   /* ── Panel Dimensions ───────────────────────────── */
   --sidebar-width-collapsed: 64px;
-  --sidebar-width-expanded: 240px;
-  --top-bar-height: 56px;
+  --sidebar-width-expanded: 220px;
+  --top-bar-height: 60px;
   --right-drawer-width: 400px;
   --right-drawer-width-wide: 480px;
   --bottom-panel-height-collapsed: 48px;

@@ -64,6 +64,12 @@ export const routes: RouteDefinition[] = [
   },
   {
     method: "GET",
+    pattern: /^\/healthz$/,
+    description: "Alias liveness and readiness signal",
+    handler: () => health()
+  },
+  {
+    method: "GET",
     pattern: /^\/v1\/markets$/,
     description: "Market summaries with coverage and confidence filters",
     handler: ({ url }) => listMarkets(url)
