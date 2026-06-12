@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "meta": {
+    "name": "Globe Land Intelligence — Master Feature List",
+    "version": "1.0.0",
+    "generatedAt": "2026-06-12",
+    "purpose": "The single machine-readable source of truth for the Globe build backlog, from the current prototype (V1) to the autonomous global land-intelligence network (V5). Pair with claude.md (engineering law) and the source docs below. Do not duplicate this enumeration elsewhere — reference feature ids.",
+    "sources": [
+      "docs/worldwide_land_intelligence_codex_master_plan.md (foundation backlog E0–E10)",
+      "docs/globe-future-state-analysis.md (V4–V5 vision and intelligence domains)",
+      "claude.md (engineering guide + Phase 0 stabilization)"
+    ],
+    "howToUse": [
+      "Pick the lowest-version, highest-priority feature whose dependsOn are all status=done.",
+      "Before writing code, resolve every id in `reuses` to its module in `reusableModules` and extend it — never re-implement.",
+      "A feature is done only when every item in `acceptance` is verifiably true and the global definitionOfDone passes.",
+      "When you build a new shared capability, register it in `reusableModules` and list it in the feature's `produces`."
+    ],
+    "legend": {
+      "status": {
+        "done": "Implemented and verified to spec.",
+        "prototype": "Exists but only on mock/file data or with known gaps; must be hardened.",
+        "in_progress": "Partially implemented.",
+        "todo": "Not started.",
+        "blocked": "Cannot start until a dependency or Phase 0 fix lands."
+      },
+      "priority": {
+        "P0": "Foundation / stabilization — required before real users.",
+        "P1": "Commercial launch (V2).",
+        "P2": "National platform (V3).",
+        "P3": "Global OS / autonomous network (V4–V5)."
+      },
+      "version": {
+        "V1": "Prototype (now).",
+        "V2": "Commercial launch — 2–3 live markets.",
+        "V3": "National intelligence platform + valuation engine + API.",
+        "V4": "Global land operating system — 50+ countries, marketplace, risk suite.",
+        "V5": "Autonomous AI land-intelligence network."
+      }
+    }
+  },
+  "conventions": {
+    "dry": {
+      "law": "Build each capability exactly once, expose it from a shared module, and reuse it everywhere. Duplication is a defect.",
+      "rules": [
+        "All domain enums, provenance, and DTOs live in @globe/types and are imported by api/web/admin. Re-declaring a DTO in an app is a build-blocking error (see audit: DTOs were re-declared in land-intelligence-app.tsx and admin/page.tsx — eliminate).",
+        "All geospatial math (coordinate normalization, H3, distance, bbox) lives in @globe/geo. No app computes geometry inline.",
+        "All cross-service constants and environment-schema validation live in @globe/config.",
+        "All shared React UI (chips, badges, legends, drawers, stat cards, provenance badge, charts) lives in @globe/ui with design tokens; apps compose, never re-style primitives.",
+        "HTTP concerns are table-driven: every endpoint is a RouteDefinition in api.router; never hand-roll request parsing, CORS, or security headers per handler — reuse writeJson / statusResolver / parse helpers.",
+        "Persistence goes through one durable store abstraction with an async write-queue. The three ad-hoc file stores (user/intake/review) collapse into it.",
+        "Legal display + provenance masking is one adapter (api.policy) applied centrally to every outbound object — no endpoint reads raw data arrays directly (see audit: exportMemo bypass).",
+        "Per-market behavior lives behind the market-adapter interface; market-specific code must never leak into the global core.",
+        "Freshness/confidence scoring is one engine consumed by API, tiles, valuation, and UI."
+      ]
+    },
+    "reusableModules": [
+      { "id": "types.domain", "path": "packages/types/src/domain.ts", "responsibility": "PriceState, FreshnessTier, ConfidenceLabel, CoverageTier enums; ProvenanceStamp; PricePoint.", "status": "prototype", "reusedBy": ["@globe/api", "@globe/web", "@globe/admin"] },
+      { "id": "types.contracts", "path": "packages/types/src/contracts.ts", "responsibility": "All API DTOs (Market, Parcel, Listing, Alert, User, SavedSearch, Compare, IntakeSubmission, CollectionResponse<T>, …). Single source of truth.", "status": "prototype", "reusedBy": ["@globe/api", "@globe/web", "@globe/admin"] },
+      { "id": "geo.coords", "path": "packages/geo/src/index.ts", "responsibility": "normalizeLongitude, isValidCoordinate, toGeoPoint.", "status": "prototype", "reusedBy": ["@globe/api", "@globe/web"] },
+      { "id": "geo.h3", "path": "packages/geo (to add)", "responsibility": "H3 cell assignment, multi-resolution aggregation, distance, bbox, polygon ops.", "status": "todo", "reusedBy": ["tiles.pipeline", "@globe/api", "@globe/web"] },
+      { "id": "config.constants", "path": "packages/config/src/index.ts", "responsibility": "PLATFORM_NAME, API_PREFIX, DEFAULT_MARKET_ROLLOUT_RULES.", "status": "prototype", "reusedBy": ["@globe/api", "@globe/web", "@globe/admin"] },
+      { "id": "config.env", "path": "packages/config (to add)", "responsibility": "Typed environment-variable schema + fail-fast validation in production.", "status": "todo", "reusedBy": ["@globe/api", "services/*"] },
+      { "id": "ui.tokens", "path": "packages/ui/tokens", "responsibility": "Design tokens: spacing, type, color semantics (ask/closed/estimate/broker_verified/freshness/confidence/risk).", "status": "todo", "reusedBy": ["@globe/web", "@globe/admin"] },
+      { "id": "ui.components", "path": "packages/ui/src/index.tsx", "responsibility": "Shared components: chip, legend, stat card, drawer, filter group, ticker row, provenance badge, sparkline.", "status": "prototype", "reusedBy": ["@globe/web", "@globe/admin"] },
+      { "id": "api.router", "path": "apps/api/src/router.ts", "responsibility": "RouteDefinition table, resolveRoute, writeJson/writeNoContent, CORS + security headers, statusResolver pattern.", "status": "prototype", "reusedBy": ["@globe/api"] },
+      { "id": "api.parse", "path": "apps/api/src/handlers.ts (parse helpers)", "responsibility": "Typed body/query parse + validation helpers (need max-length + email-format guards).", "status": "prototype", "reusedBy": ["@globe/api"] },
+      { "id": "api.policy", "path": "apps/api/src/handlers.ts (maskParcelForPolicy + display adapters)", "responsibility": "Central legal-display/provenance masking for every outbound object.", "status": "prototype", "reusedBy": ["@globe/api", "tiles.pipeline"] },
+      { "id": "api.store", "path": "apps/api/src (to unify)", "responsibility": "Durable persistence abstraction with async serialized write-queue; Postgres-backed in prod.", "status": "todo", "reusedBy": ["@globe/api"] },
+      { "id": "api.auth", "path": "apps/api/src/auth.ts", "responsibility": "HMAC session tokens, TTL, client-key rate limiting, role checks.", "status": "prototype", "reusedBy": ["@globe/api"] },
+      { "id": "db.schema", "path": "db/migrations", "responsibility": "PostGIS canonical schema + migration workflow + seeds.", "status": "prototype", "reusedBy": ["@globe/api", "services/*"] },
+      { "id": "ingest.framework", "path": "services/ingestion", "responsibility": "Reusable connector contract: pull → snapshot → checksum → parse → normalize → QA → publish; retries, lineage.", "status": "done", "reusedBy": ["services/ingestion"] },
+      { "id": "ingest.marketAdapter", "path": "services/ingestion (market-adapters)", "responsibility": "One adapter interface (currency, units, tenure, zoning, freshness, legal rules); many market implementations.", "status": "todo", "reusedBy": ["services/ingestion"] },
+      { "id": "data.layers", "path": "db / services", "responsibility": "Bronze/silver/gold layered schemas with lineage, snapshot versioning, replay.", "status": "todo", "reusedBy": ["services/ingestion", "@globe/api"] },
+      { "id": "scoring.confidence", "path": "packages or services (to add)", "responsibility": "Freshness + confidence scoring engine with human-readable explanations.", "status": "todo", "reusedBy": ["@globe/api", "valuation.service", "tiles.pipeline", "@globe/ui"] },
+      { "id": "pricing.priceState", "path": "services/valuation or api", "responsibility": "Reconcile ask/closed/estimate/broker_verified; headline ranking; chart rules.", "status": "todo", "reusedBy": ["@globe/api", "@globe/web"] },
+      { "id": "valuation.service", "path": "services/valuation", "responsibility": "AVM feature pipeline, model registry, prediction intervals, batch + on-demand inference.", "status": "todo", "reusedBy": ["@globe/api"] },
+      { "id": "search.index", "path": "services / infra (OpenSearch)", "responsibility": "Full-text + geo-shape + vector search with typed grouped results.", "status": "todo", "reusedBy": ["@globe/api", "@globe/web"] },
+      { "id": "tiles.pipeline", "path": "services / infra", "responsibility": "Vector-tile generation/serving for H3 cells, boundaries, parcels, overlays; cache-safe versioning; render-safe fields only.", "status": "todo", "reusedBy": ["@globe/web"] },
+      { "id": "alerts.changeDetection", "path": "services / api", "responsibility": "Event store + change-detection jobs + alert rule engine + anti-spam dedupe + delivery.", "status": "todo", "reusedBy": ["@globe/api", "@globe/web"] },
+      { "id": "obs.logging", "path": "packages or infra (to add)", "responsibility": "Structured logging, request logging, tracing, metrics — shared across apps/services.", "status": "todo", "reusedBy": ["@globe/api", "services/*", "@globe/web"] }
+    ]
+  },
+  "phases": [
+    { "id": "P0", "name": "Stabilize the prototype", "version": "V1", "goal": "Close the audit's critical/major issues so the prototype is safe for real users.", "epics": ["E-STABILIZE"], "exitCriteria": ["All P0 features done", "typecheck/lint/test/build green", "no critical audit item open"] },
+    { "id": "P1", "name": "Commercial launch", "version": "V2", "goal": "Real data in 2–3 markets behind the coverage-tier model; first paid product.", "epics": ["E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10"], "exitCriteria": ["≥1 live market end-to-end", "valuation v0 beats broker error on closed comps", "Pro billing live"] },
+    { "id": "P2", "name": "National platform", "version": "V3", "goal": "Full-country coverage, production valuation + risk v1, public API.", "epics": ["E5", "E11", "E12", "E13", "E14", "E15", "E20"], "exitCriteria": ["national cadastre live", "metered API GA", "risk scores on parcels"] },
+    { "id": "P3", "name": "Global OS + autonomous network", "version": "V4-V5", "goal": "50+ countries, marketplace, satellite + AI agents, multi-region scale.", "epics": ["E16", "E17", "E18", "E19", "E21"], "exitCriteria": ["marketplace GMV flywheel", "autonomous monitoring agents in production"] }
+  ],
+  "definitionOfDone": {
+    "feature": [
+      "Code committed in the correct package/service (shared logic in a package, not an app).",
+      "All referenced `reuses` modules were extended, not duplicated.",
+      "Tests added; npm run test passes.",
+      "npm run lint and npm run typecheck pass.",
+      "Provenance + legal-display behavior handled for any user-facing datum.",
+      "Docs/fixtures updated; screenshots for UI; docs/documentation.md log updated.",
+      "Every `acceptance` item is verifiably true."
+    ],
+    "market": [
+      "Source + license registered; legal display policy documented and enforced.",
+      "Market adapter implemented and tested against fixtures.",
+      "QA scorecard green; coverage tier assigned; badges + trust metadata render.",
+      "Support/ops owner assigned."
+    ]
+  },
+  "epics": [
+    {
+      "id": "E-STABILIZE",
+      "name": "Phase 0 — Stabilize the prototype",
+      "phase": "P0",
+      "goal": "Close every critical/major/minor issue from the audit (claude.md) before real users exist. These are blocking for V2.",
+      "features": [
+        { "id": "F-STB-01", "title": "Fix exportMemo legal-display bypass", "description": "exportMemo reads parcels.find() directly and returns un-redacted restricted parcels. Apply api.policy masking to every parcel and return 403 if any resolves to REDACTED.", "ref": "apps/api/src/handlers.ts:921-986", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.policy"], "produces": [], "acceptance": ["Restricted parcel (e.g. p-ldn-001) never returns canonicalParcelId/area/zoning via memo", "403 returned when any requested parcel is policy-restricted", "regression test covers the bypass"] },
+        { "id": "F-STB-02", "title": "Replace SHA-256 password hashing with argon2id/scrypt", "description": "Swap general-purpose digest for a password-hashing function; detect legacy hashes on login and re-hash on success.", "ref": "apps/api/src/user-store.ts:47-49", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.auth"], "produces": [], "acceptance": ["New passwords stored with argon2id or node:crypto.scrypt (cost ≥ 12 equivalent)", "legacy SHA-256 hashes transparently upgraded at next successful login", "no plaintext or fast-digest path remains"] },
+        { "id": "F-STB-03", "title": "Constant-time password comparison", "description": "Replace `attemptedHash !== user.passwordHash` with timingSafeEqual over equal-length buffers.", "ref": "apps/api/src/user-store.ts:215-216", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": ["F-STB-02"], "reuses": ["api.auth"], "produces": [], "acceptance": ["comparison uses crypto.timingSafeEqual", "no early-return on length mismatch that leaks timing"] },
+        { "id": "F-STB-04", "title": "Durable stores — remove /tmp production default", "description": "User/intake/review stores default to ephemeral /tmp in prod, destroying all data on deploy. Require explicit store-file env in prod or back with Postgres.", "ref": "apps/api/src/{user-store,intake-store,review-store}.ts", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["config.env"], "produces": ["api.store"], "acceptance": ["prod start fails fast if store path/DB unset", "data survives a simulated redeploy", "single store abstraction backs all three"] },
+        { "id": "F-STB-05", "title": "Async serialized write-queue (no event-loop block, no corruption)", "description": "Replace synchronous writeFileSync on every mutation with an async single-promise-chain write queue serializing all writes.", "ref": "apps/api/src/{user-store,intake-store,review-store}.ts:writeFileSync", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": ["F-STB-04"], "reuses": ["api.store"], "produces": [], "acceptance": ["no synchronous fs writes in request path", "two concurrent POSTs never lose a record", "writes serialized via one queue"] },
+        { "id": "F-STB-06", "title": "Require and validate critical env vars at startup", "description": "Require APP_AUTH_TOKEN_SECRET in production (no operator-password or ephemeral-random fallback); validate APP_OPERATOR_* are not placeholders. Build a typed env schema module.", "ref": "apps/api/src/auth.ts:46-61", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.auth"], "produces": ["config.env"], "acceptance": ["prod start fails fast when APP_AUTH_TOKEN_SECRET missing", "no secret falls back to operator password or per-process random", "env schema reused by api + services"] },
+        { "id": "F-STB-07", "title": "Rate-limit and unify user login + registration", "description": "User-account login path bypasses the operator rate limiter, allowing unlimited brute force; registration is unthrottled. Apply a shared clientKey rate-limit map to both.", "ref": "apps/api/src/handlers.ts:655-704", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.auth"], "produces": [], "acceptance": ["repeated failed user logins return 429 after threshold", "register endpoint is rate-limited", "one shared limiter used by all auth paths"] },
+        { "id": "F-STB-08", "title": "Respect APP_SESSION_TTL_MINUTES for user tokens", "description": "User token TTL is hardcoded to 12h; use getSessionTtlMs() like the operator path.", "ref": "apps/api/src/handlers.ts:673-674,729-730", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.auth"], "produces": [], "acceptance": ["login and register use getSessionTtlMs()", "env var changes user token expiry"] },
+        { "id": "F-STB-09", "title": "Input hardening — max-length, email format, compare cap, OPTIONS resolution", "description": "Add max-length guards to all free-text fields, a real email regex, a 20-id cap on compareParcels (400 on excess), and resolve routes before answering OPTIONS.", "ref": "apps/api/src/handlers.ts:179-252,302,405,426,882-919; server.ts:78-80", "version": "V1", "priority": "P0", "status": "todo", "dependsOn": [], "reuses": ["api.parse", "api.router"], "produces": [], "acceptance": ["over-long fields rejected with 400/422", "invalid emails rejected by regex", "compare >20 ids returns 400", "OPTIONS on unknown path does not return 204"] },
+        { "id": "F-STB-10", "title": "Frontend, CSP, and schema cleanups", "description": "Gate CSP connect-src localhost:4000 to dev; self-host MapLibre fonts; type EMPTY_GRID_FILTER; remove dead admin localStorage.removeItem; add 'closed' to listing.price_state CHECK (or document); remove sanitizeAlert no-op; stop emitting center 0,0 for masked parcels.", "ref": "apps/web/next.config.mjs:19; apps/web/components/globe-canvas.tsx:146,152; apps/admin/app/page.tsx:116,266; db/migrations/0001_init.sql:147; apps/api/src/handlers.ts:145-162", "version": "V1", "priority": "P1", "status": "todo", "dependsOn": [], "reuses": ["api.policy"], "produces": [], "acceptance": ["prod CSP has no localhost connect-src", "no demo tile/font endpoint in prod", "no `any` in globe filter", "masked parcels omit center rather than 0,0", "lint/typecheck clean"] }
+      ]
+    },
+    {
+      "id": "E0",
+      "name": "Program setup, architecture, and agent readiness",
+      "phase": "P1",
+      "goal": "Coverage policy, monorepo standards, agent guidance, and architecture decisions are explicit and enforced.",
+      "features": [
+        { "id": "F-E0-01", "title": "Coverage-tier policy + shared enums", "description": "Define tier A/B/C capabilities, prohibitions, badges, freshness/confidence thresholds; back with the CoverageTier enum already in types.domain.", "version": "V1", "priority": "P0", "status": "prototype", "dependsOn": [], "reuses": ["types.domain"], "produces": [], "acceptance": ["docs/product/coverage-model.md exists", "every market is assignable a tier", "low-confidence data auto-downgrades"] },
+        { "id": "F-E0-02", "title": "Monorepo bootstrap + engineering standards", "description": "npm workspaces for apps/packages/services with shared lint/typecheck/test/build scripts.", "version": "V1", "priority": "P0", "status": "done", "dependsOn": [], "reuses": [], "produces": [], "acceptance": ["fresh clone boots", "npm run lint/typecheck/test/build exist", "services start independently"] },
+        { "id": "F-E0-03", "title": "Agent guidance — AGENTS.md, claude.md, task templates", "description": "Persistent repo instructions, DRY law, definition of done, and reusable task template.", "version": "V1", "priority": "P0", "status": "prototype", "dependsOn": ["F-E0-02"], "reuses": [], "produces": [], "acceptance": ["AGENTS.md + claude.md present and consistent", "task template documents Goal/Context/Constraints/Done-when"] },
+        { "id": "F-E0-04", "title": "Architecture decision records (ADRs)", "description": "Record MapLibre-first, optional Cesium, PostGIS source-of-truth, H3 aggregation, OpenSearch, object storage, Python ETL, real-time model.", "version": "V1", "priority": "P1", "status": "todo", "dependsOn": ["F-E0-02"], "reuses": [], "produces": [], "acceptance": ["docs/architecture/adr-*.md for each high-risk choice with alternatives + revisit criteria"] }
+      ]
+    },
+    {
+      "id": "E1",
+      "name": "Product design system and UX foundations",
+      "phase": "P1",
+      "goal": "A reusable dark, data-dense design system and the information/interaction model for globe → market → parcel.",
+      "features": [
+        { "id": "F-E1-01", "title": "Global information architecture", "description": "Routes and object hierarchy for Explore, Markets, Parcels, Compare, Watchlists, Alerts, Admin; empty states for tier-A markets.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E0-01"], "reuses": [], "produces": [], "acceptance": ["route schema stable", "coverage tiers map to pages/panels", "every action has a home"] },
+        { "id": "F-E1-02", "title": "Design system + semantic tokens in @globe/ui", "description": "Tokens (spacing/type/elevation/color), price-state/freshness/confidence/risk color semantics, and reusable primitives (chip, legend, stat card, drawer, filter group, ticker row, provenance badge, sparkline).", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E0-02"], "reuses": ["ui.components"], "produces": ["ui.tokens", "ui.components"], "acceptance": ["states render consistently across web + admin", "confidence/freshness accessible", "dark mode first-class"] },
+        { "id": "F-E1-03", "title": "Globe / market / parcel interaction contract", "description": "Zoom breakpoints, click/hover/select/multi-select/compare/draw behaviors, filter persistence across navigation, deterministic drawer behavior.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E1-01", "F-E1-02"], "reuses": [], "produces": [], "acceptance": ["every zoom range has a visualization mode", "filters survive navigation", "drawer behavior deterministic"] },
+        { "id": "F-E1-04", "title": "Search, filter, compare, watchlist flows", "description": "Shared filter model (price, price/area, size, use class, tenure, freshness, confidence, availability, hazard, proximity) and consistent compare/watchlist/alert object model.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E1-01", "F-E1-03"], "reuses": ["types.contracts"], "produces": [], "acceptance": ["filter behavior defined for all object types", "compare/watchlist share one model", "alert rules derivable from saved views"] }
+      ]
+    },
+    {
+      "id": "E2",
+      "name": "Geospatial foundation and map infrastructure",
+      "phase": "P1",
+      "goal": "Production-safe basemap, global geography tree, H3 aggregation, vector tiles, and map performance budgets.",
+      "features": [
+        { "id": "F-E2-01", "title": "Basemap provider abstraction", "description": "Swappable basemap layer (open/licensed), attribution rendering, dev-vs-prod provider switching; no dependence on public OSM tiles.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E0-04"], "reuses": [], "produces": [], "acceptance": ["no prod path uses public OSM tiles", "attribution always correct", "providers swap per environment"] },
+        { "id": "F-E2-02", "title": "Global geography hierarchy + APIs", "description": "Canonical country→region→city→district→neighborhood tree with multilingual names, containment, reverse-geography lookup.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E0-01", "F-E2-01"], "reuses": ["geo.coords", "db.schema"], "produces": [], "acceptance": ["lat/lng maps to a geography stack", "every market attaches to standard geography", "multilingual labels returned"] },
+        { "id": "F-E2-03", "title": "H3 world aggregation", "description": "Multi-resolution H3 cell assignment + time-bucketed precomputes (price medians, availability, activity velocity, freshness/confidence mix) with drill-through.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-02"], "reuses": ["geo.h3"], "produces": ["geo.h3"], "acceptance": ["globe view never queries raw parcels/listings", "cells recompute incrementally", "multiple time windows supported"] },
+        { "id": "F-E2-04", "title": "Vector tile pipeline", "description": "Tile schemas + generation/serving for H3 cells, boundaries, parcel outlines, overlays; cache-safe versioning; only render-safe fields exposed.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-02", "F-E2-03"], "reuses": ["api.policy"], "produces": ["tiles.pipeline"], "acceptance": ["tile latency within budget", "protected fields never leak into tiles", "tiles versioned + cache-safe"] },
+        { "id": "F-E2-05", "title": "Map performance budgets + progressive disclosure", "description": "Render/latency budgets, zoom thresholds + object caps, progressive loading, parcel→centroid fallback, FPS/memory telemetry.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-03", "F-E2-04"], "reuses": ["obs.logging"], "produces": [], "acceptance": ["world view interactive on target hardware", "over-zoomed data degrades gracefully", "regressions measurable"] }
+      ]
+    },
+    {
+      "id": "E3",
+      "name": "Data platform, ingestion, and source management",
+      "phase": "P1",
+      "goal": "Licensing-first source registry and reusable ingestion + market-adapter frameworks with layered data and quality gates.",
+      "features": [
+        { "id": "F-E3-01", "title": "Source registry + licensing catalog", "description": "Tables for source/dataset/license/attribution/allowed-use/restrictions/renewal; status states; every record links to a registry entry; display-blocked enforcement.", "version": "V2", "priority": "P0", "status": "in_progress", "dependsOn": ["F-E0-01"], "reuses": ["db.schema", "api.policy"], "produces": [], "acceptance": ["every displayed record maps to an approved dataset", "blocked sources disappear safely", "per-source attribution renders"] },
+        { "id": "F-E3-02", "title": "Reusable raw ingestion framework", "description": "One connector contract: pull → snapshot → checksum → schema detect → parse → normalize → QA → publish; idempotency, retries, dead-letter, lineage; raw artifacts to object storage.", "version": "V2", "priority": "P0", "status": "done", "dependsOn": ["F-E0-02", "F-E3-01"], "reuses": [], "produces": ["ingest.framework"], "acceptance": ["new connector added with minimal custom code", "failed jobs retry safely", "raw artifacts retained for audit"] },
+        { "id": "F-E3-03", "title": "Market adapter framework + first 3 adapters", "description": "Adapter interface (currency, units, tenure, zoning, source list, availability, freshness, confidence, legal rules); implement Dubai/UAE, England & Wales, Singapore.", "version": "V2", "priority": "P0", "status": "in_progress", "dependsOn": ["F-E3-01", "F-E3-02"], "reuses": ["ingest.framework", "types.domain"], "produces": ["ingest.marketAdapter"], "acceptance": ["new market follows a predictable checklist", "market rules isolated from core", "adapters tested with fixtures"] },
+        { "id": "F-E3-04", "title": "Bronze / silver / gold data layers", "description": "Raw → normalized → canonical layers with lineage columns, snapshot versioning, replay, and snapshot diff utilities.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E3-02"], "reuses": ["db.schema"], "produces": ["data.layers"], "acceptance": ["canonical entities trace to source rows", "regressions debuggable from snapshots", "gold tables safe for product queries"] },
+        { "id": "F-E3-05", "title": "Data quality rules + anomaly detection", "description": "Schema/required/geometry/price/unit/duplicate/freshness/outage checks with hard-fail vs soft-warn, dashboards, and gold-layer publication gating.", "version": "V2", "priority": "P1", "status": "in_progress", "dependsOn": ["F-E3-02", "F-E3-04"], "reuses": ["data.layers", "obs.logging"], "produces": [], "acceptance": ["bad datasets quarantined", "failures inspectable quickly", "quality gates protect user-facing tables"] }
+      ]
+    },
+    {
+      "id": "E4",
+      "name": "Canonical domain model, normalization, and confidence",
+      "phase": "P1",
+      "goal": "PostGIS canonical schema wired to the API, with normalization, dedupe, geocoding, the confidence engine, and machine-enforced legal policy.",
+      "features": [
+        { "id": "F-E4-01", "title": "Core PostGIS schema in production use", "description": "Connect the API to the existing PostGIS schema (geographies, parcels, geometries, listings, listing_events, transactions, estimates, brokers, developers, projects, permits, sources, licenses, watchlists, alerts) with indexes, audit columns, migrations, seeds; retire mock data.ts.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E0-04", "F-E2-02", "F-E3-04"], "reuses": ["db.schema", "api.store"], "produces": [], "acceptance": ["API reads/writes Postgres, not data.ts", "spatial queries indexed", "history preserved for changing objects"] },
+        { "id": "F-E4-02", "title": "Currency, area, and unit normalization", "description": "Canonical units (sqm/sqft/acre/hectare) + canonical price fields (local, base-currency, per-area) + FX ingestion with historical conversion; preserve source-native values; locale formatting helpers.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E4-01"], "reuses": ["geo.coords", "config.constants"], "produces": [], "acceptance": ["listings/transactions comparable across markets", "source-native values recoverable", "charts use consistent conversion"] },
+        { "id": "F-E4-03", "title": "Canonical identity + dedupe", "description": "Stable internal IDs and deterministic + probabilistic dedupe clusters for parcels/listings/brokers/developers/transactions with cluster confidence and review hooks.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E4-01", "F-E3-05"], "reuses": ["db.schema"], "produces": [], "acceptance": ["duplicates collapse safely", "ambiguous merges reviewable", "confidence preserved on canonical objects"] },
+        { "id": "F-E4-04", "title": "Geocoding + spatial confidence scoring", "description": "Forward/reverse geocoding to geography hierarchy with geometry confidence classes (exact boundary / authoritative centroid / derived centroid / locality-only) and a geometry review queue.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-02", "F-E4-01"], "reuses": ["geo.coords"], "produces": [], "acceptance": ["every mapped object has a geometry-confidence label", "parcel pages require acceptable confidence", "locality-only records downgrade in UI"] },
+        { "id": "F-E4-05", "title": "Freshness + confidence scoring engine", "description": "Shared scoring for listings/transactions/parcels/estimates/cells with human-readable explanations and API-ready payloads.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E3-01", "F-E4-03", "F-E4-04"], "reuses": ["types.domain"], "produces": ["scoring.confidence"], "acceptance": ["trust signals consistent across API + UI", "explanations human-readable", "low-confidence records hide/downgrade"] },
+        { "id": "F-E4-06", "title": "Machine-enforced legal display policy", "description": "Policy types (display boundary/price/address, redistribute broker data, raw export, historical record) at source/market/object level with precedence, redaction adapters, and audit logs. Generalizes api.policy.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E3-01", "F-E3-03", "F-E4-01"], "reuses": ["api.policy"], "produces": ["api.policy"], "acceptance": ["restricted fields never leak via API or tiles", "policy changes need no schema change", "redactions auditable"] }
+      ]
+    },
+    {
+      "id": "E5",
+      "name": "Pricing, comps, and valuation intelligence",
+      "phase": "P1",
+      "goal": "Comparable selection, the price-state engine, benchmark fallback, and a versioned valuation service with explainability and history.",
+      "features": [
+        { "id": "F-E5-01", "title": "Comparable selection engine", "description": "Comp eligibility by market/use-class using distance/time/area/zoning/tenure/access/source-quality, with sparse-market fallback and explainable candidate sets.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E4-01", "F-E4-02", "F-E4-03"], "reuses": ["geo.h3"], "produces": [], "acceptance": ["parcel pages show 'why these comps'", "candidate sets reusable by valuation", "graceful degradation in sparse markets"] },
+        { "id": "F-E5-02", "title": "Price-state engine", "description": "Reconcile ask/closed/estimate/broker_verified without conflating; headline ranking by context; chart rules; conflict resolution; full event history.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E4-05", "F-E5-01"], "reuses": ["types.domain"], "produces": ["pricing.priceState"], "acceptance": ["UI never mixes asks with closed sales", "parcel cards switch states cleanly", "every observation traceable + historical"] },
+        { "id": "F-E5-03", "title": "Regional index + benchmark fallback", "description": "Market index observations and benchmark aggregations (city/district/use-class/price-band) with explicit labeling when used instead of parcel estimates.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E5-01", "F-E5-02"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["thin-data markets still produce useful context", "fallback clearly labeled", "charts blend parcel + market without confusion"] },
+        { "id": "F-E5-04", "title": "Valuation model service (AVM)", "description": "Training/inference pipelines, feature sets (comp stats, zoning, tenure, access, hazards, geography, recency, index context), versioned artifacts, prediction intervals, batch + on-demand inference.", "version": "V3", "priority": "P1", "status": "todo", "dependsOn": ["F-E5-01", "F-E5-03"], "reuses": ["data.layers", "scoring.confidence"], "produces": ["valuation.service"], "acceptance": ["estimates versioned + reproducible", "predictions include uncertainty", "re-runnable after source updates"] },
+        { "id": "F-E5-05", "title": "Estimate explainability + confidence intervals", "description": "Expose drivers (comp range/count, distance band, zoning similarity, trend adjustment, freshness), interval bands, low-quality reasons, internal review, export-ready summaries.", "version": "V3", "priority": "P1", "status": "todo", "dependsOn": ["F-E5-04"], "reuses": ["valuation.service", "scoring.confidence"], "produces": [], "acceptance": ["every estimate explains itself", "low-confidence estimates obvious", "ops can review outliers"] },
+        { "id": "F-E5-06", "title": "Price + status event timelines", "description": "Immutable price/status events (listed, price cut/raise, off-market, sold, estimate refreshed, broker-verified, permit, zoning) with timeline APIs and shared feeds for tickers + alerts.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E5-02"], "reuses": ["db.schema"], "produces": ["alerts.changeDetection"], "acceptance": ["parcel pages show clean chronology", "tickers powered from same event store", "alerts subscribe to event types"] }
+      ]
+    },
+    {
+      "id": "E6",
+      "name": "Public APIs, search, auth, and notifications",
+      "phase": "P1",
+      "goal": "A versioned, policy-aware API surface; RBAC + orgs; geo + full-text search; the shared filter/ranking engine; watchlists, alerts, and delivery.",
+      "features": [
+        { "id": "F-E6-01", "title": "Versioned, policy-aware API surface", "description": "Stable endpoints for cells/markets/parcels/search/filters/compare/watchlists/alerts/admin with schema versioning, central field-level redaction, documented pagination/sorting/errors, and typed clients. Extends the existing route table.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E4-01"], "reuses": ["api.router", "api.policy", "types.contracts"], "produces": [], "acceptance": ["web + admin consume the same contracts", "redaction applied centrally", "contracts versioned + documented"] },
+        { "id": "F-E6-02", "title": "Auth, organizations, and RBAC", "description": "Roles (anonymous→user→paid→analyst→broker→market-ops→admin→data-engineer), org/team membership, permissioned data/exports/review/source-editing, audit logging, entitlement hooks. Hardens api.auth.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E6-01", "F-STB-06"], "reuses": ["api.auth"], "produces": [], "acceptance": ["sensitive tools permission-gated", "entitlements layer without redesign", "admin actions auditable"] },
+        { "id": "F-E6-03", "title": "Full-text + geo search", "description": "Indexed search across geographies/parcels/projects/brokers/developers/addresses/coordinates/saved-polygons with autocomplete, synonyms, multilingual matching, geo-shape/bbox, typed grouped results ranked by coverage + confidence.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-02", "F-E4-03", "F-E6-01"], "reuses": ["geo.h3"], "produces": ["search.index"], "acceptance": ["top results relevant + typed", "coordinates/parcel ids resolve reliably", "multilingual queries work in supported markets"] },
+        { "id": "F-E6-04", "title": "Shared filter + ranking engine", "description": "One query DSL for map/list/compare/export so the same filter yields the same set everywhere; ranking strategies (relevance/newest/best-value/highest-confidence/biggest-drop).", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E6-03", "F-E2-05"], "reuses": ["search.index", "types.contracts"], "produces": [], "acceptance": ["identical filter → identical results across surfaces", "latency within budget", "filter combinations predictable"] },
+        { "id": "F-E6-05", "title": "Watchlists, alerts, and change detection", "description": "Saved parcels/geographies/polygons/searches; rule types (new listing, price drop, status change, recorded transaction, confidence change, nearby permit/zoning); change-detection jobs with anti-spam dedupe.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E5-06", "F-E6-02"], "reuses": ["alerts.changeDetection"], "produces": ["alerts.changeDetection"], "acceptance": ["user can monitor parcel/area/search", "alerts fire only on real deltas", "notification volume controllable"] },
+        { "id": "F-E6-06", "title": "Notification delivery + preferences", "description": "In-app/email/webhook channels, instant vs digest, timezone-aware windows, unsubscribe/mute, delivery logs + retries.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E6-05"], "reuses": ["obs.logging"], "produces": [], "acceptance": ["users control cadence + channels", "failed deliveries visible + retryable", "timezone handling correct"] }
+      ]
+    },
+    {
+      "id": "E7",
+      "name": "User-facing product implementation",
+      "phase": "P1",
+      "goal": "The globe-first application: shell, globe view, market view, parcel dossier, trust UI, compare/watchlist, live ticker, and i18n/a11y.",
+      "features": [
+        { "id": "F-E7-01", "title": "Application shell + global layout", "description": "Route-aware shell: top controls (search, currency, price-state, buy/lease, layers), map canvas, right drawer, bottom legend, ticker, compare/watchlist tray; keyboard shortcuts + state persistence.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E1-02", "F-E6-01"], "reuses": ["ui.components"], "produces": [], "acceptance": ["shell stable across routes", "state survives navigation/refresh", "usable on target breakpoints"] },
+        { "id": "F-E7-02", "title": "Global globe view", "description": "Aggregated cells with view modes (median ask/closed per area, estimate benchmark, availability, activity, confidence), camera persistence + deep links, hover/click/compare/drill-down, coverage badges.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E2-03", "F-E2-04", "F-E7-01"], "reuses": ["tiles.pipeline", "geo.h3"], "produces": [], "acceptance": ["world view performant + legible", "clean globe→market drill", "coverage depth obvious at country level"] },
+        { "id": "F-E7-03", "title": "Market view with clusters + overlays", "description": "City/region view: listing clusters, district stats, recent transactions, permit/planning + hazard overlays, map/list toggle, filter chips, mini trends, drawn-polygon analysis.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E2-04", "F-E6-04", "F-E7-01"], "reuses": ["tiles.pipeline", "ui.components"], "produces": [], "acceptance": ["handles dense + sparse regions", "filters/overlays immediate", "polygons summarize inventory + pricing"] },
+        { "id": "F-E7-04", "title": "Parcel view + dossier", "description": "Parcel header (price states, freshness, confidence, availability) and sections (geometry, zoning/use, utilities/access, comps, price history, documents, broker/developer, nearby risk + development) with compare/save, provenance drawer, export-ready summary.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E5-02", "F-E5-06", "F-E7-03"], "reuses": ["ui.components", "api.policy"], "produces": [], "acceptance": ["parcel detail evidence-backed", "provenance inspectable", "compare/watchlist one click away"] },
+        { "id": "F-E7-05", "title": "Provenance / freshness / confidence UI", "description": "Reusable freshness chips, confidence bars, source badges, coverage labels, legal-limited banners, 'why am I seeing this?' panel; compare-safe trust display in tables.", "version": "V1", "priority": "P1", "status": "prototype", "dependsOn": ["F-E4-05", "F-E7-01"], "reuses": ["ui.components", "scoring.confidence"], "produces": [], "acceptance": ["every price can show trust metadata", "low-confidence never silent", "coverage limits visible before frustration"] },
+        { "id": "F-E7-06", "title": "Compare, portfolio, and watchlist UI", "description": "Compare tray + page (parcel/district/city), watchlist + saved-search views, quick-alert creation, summary metrics + sparkline history.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E6-05", "F-E7-01"], "reuses": ["ui.components", "types.contracts"], "produces": [], "acceptance": ["users build + revisit comparison sets", "watchlists show recent change events", "no re-search each session"] },
+        { "id": "F-E7-07", "title": "Ticker, time slider, and activity feed", "description": "Global + market activity feed, event types, time slider for map reaggregation + historical playback, event/geography/object filters, pause/replay.", "version": "V2", "priority": "P2", "status": "prototype", "dependsOn": ["F-E5-06", "F-E6-05", "F-E7-01"], "reuses": ["alerts.changeDetection", "ui.components"], "produces": [], "acceptance": ["feed updates without overwhelming", "map aggregates replay across time", "users filter to meaningful events"] },
+        { "id": "F-E7-08", "title": "Multilingual, RTL, and accessibility", "description": "i18n architecture + locale-aware number/currency/date/unit formatting, RTL for layout-critical screens, keyboard nav, screen-reader semantics, focus + contrast, multilingual map labels.", "version": "V2", "priority": "P2", "status": "todo", "dependsOn": ["F-E1-02", "F-E2-02", "F-E7-01"], "reuses": ["config.constants"], "produces": [], "acceptance": ["app runs LTR + RTL", "trust-critical UI accessible (WCAG)", "locale formatting correct + consistent"] }
+      ]
+    },
+    {
+      "id": "E8",
+      "name": "Admin operations and partner workflows",
+      "phase": "P1",
+      "goal": "Operational visibility and human-in-the-loop tooling: ingestion monitor, review queues, broker verification, and no-code market onboarding.",
+      "features": [
+        { "id": "F-E8-01", "title": "Ingestion monitor + source health dashboard", "description": "Source status cards (last success, next expected, row delta, quality score, blocked), job drill-down, raw artifact links, retry/quarantine, anomaly trends by source/market.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E3-02", "F-E3-05"], "reuses": ["ui.components", "obs.logging"], "produces": [], "acceptance": ["ops sees stale/broken/blocked sources fast", "health drillable by market", "failed jobs retryable from admin"] },
+        { "id": "F-E8-02", "title": "Manual review queues", "description": "Queues for dedupe-merge, geometry candidates, blocked-field policy, suspicious price; candidate compare views; approve/reject/split/escalate; reviewer audit + sampling QA.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E4-03", "F-E4-04", "F-E4-06"], "reuses": ["ui.components"], "produces": [], "acceptance": ["ambiguous cases resolvable by humans", "decisions traceable", "manual review improves future rules"] },
+        { "id": "F-E8-03", "title": "Broker + developer verification workflows", "description": "Partner roles + verification states; invite → identity/org verification → listing/quote confirmation → expiry/re-verification; evidence + approval notes; public broker-verified badge with timestamps.", "version": "V2", "priority": "P2", "status": "todo", "dependsOn": ["F-E6-02", "F-E5-02"], "reuses": ["api.auth"], "produces": [], "acceptance": ["broker-verified labels auditable", "stale verifications expire", "public UI reflects verification age + source"] },
+        { "id": "F-E8-04", "title": "Source config + market onboarding admin", "description": "Admin forms for source/adapter metadata, coverage tier, attribution, schedules, display policies; onboarding checklists + gating; staged-market preview; activation controls — no redeploy for metadata.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E3-01", "F-E3-03"], "reuses": ["ui.components", "api.policy"], "produces": [], "acceptance": ["metadata changes need no redeploy", "staged markets previewable safely", "activation gated by checklist"] }
+      ]
+    },
+    {
+      "id": "E9",
+      "name": "Observability, security, billing, and reliability",
+      "phase": "P1",
+      "goal": "Operate at scale safely: telemetry, hardened security, load testing, billing/entitlements, and backup/DR.",
+      "features": [
+        { "id": "F-E9-01", "title": "Platform observability", "description": "Structured + request logging, tracing across ingestion/API/tiles/notifications, metrics (source freshness, tile/search latency, alert delay, render failures, inference duration), product analytics, dashboards + runbooks.", "version": "V2", "priority": "P0", "status": "todo", "dependsOn": ["F-E0-02"], "reuses": [], "produces": ["obs.logging"], "acceptance": ["key flows measurable end-to-end", "regressions/outages visible", "usage guides prioritization"] },
+        { "id": "F-E9-02", "title": "Security, secrets, and data protection hardening", "description": "Secrets management + env separation, rate limiting + abuse protection, object-level authorization, signed export URLs, encryption in transit/at rest, dependency + container scanning, Docker HEALTHCHECK.", "version": "V2", "priority": "P0", "status": "prototype", "dependsOn": ["F-E6-02"], "reuses": ["api.auth", "config.env"], "produces": [], "acceptance": ["protected paths access-controlled", "no secrets in repo/logs", "exports respect entitlements + policy"] },
+        { "id": "F-E9-03", "title": "Performance + load testing", "description": "Load scenarios (globe open, market drill, filter churn, parcel opens, search bursts, ingest invalidation), synthetic datasets, CI regression thresholds, p50/p95/p99 capture.", "version": "V2", "priority": "P2", "status": "todo", "dependsOn": ["F-E2-05", "F-E6-04", "F-E9-01"], "reuses": ["obs.logging"], "produces": [], "acceptance": ["scale bottlenecks found pre-launch", "budgets have automated checks", "large-market scenarios testable"] },
+        { "id": "F-E9-04", "title": "Billing, entitlements, and API quotas", "description": "Tiers (free/pro/team/enterprise/government), gates (exports, alert volume, history depth, API access, premium overlays, broker workflow), usage metering + quota checks, billing hooks.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E6-02"], "reuses": ["api.auth"], "produces": [], "acceptance": ["plan-based access enforced centrally", "quota state observable", "billing changes update access cleanly"] },
+        { "id": "F-E9-05", "title": "Backup, disaster recovery, and retention", "description": "Backup plans for Postgres/search/object-storage/model-registry, restore procedures + RTO, retention policies, periodic restore drills, CI lint/typecheck/test gates before deploy.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E4-01", "F-E9-01"], "reuses": [], "produces": [], "acceptance": ["core stores have tested restore paths", "retention explicit + compliant", "raw + gold both recoverable"] }
+      ]
+    },
+    {
+      "id": "E10",
+      "name": "Worldwide rollout and go-to-market operations",
+      "phase": "P1",
+      "goal": "Make market expansion repeatable and honest: onboarding playbook, coverage catalog, pilot markets, partner framework, launch ops.",
+      "features": [
+        { "id": "F-E10-01", "title": "Market onboarding playbook", "description": "Repeatable template (source discovery, legal review, adapter mapping, QA thresholds, UI preview, launch checklist) with scorecards and rollout stages (hidden→beta→limited→full).", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E3-03", "F-E4-06"], "reuses": [], "produces": [], "acceptance": ["new markets evaluated consistently", "legal/data/product share one checklist", "launch stage explicit"] },
+        { "id": "F-E10-02", "title": "Coverage badges + data-availability catalog", "description": "Per-market catalog (benchmark only / listing depth / transaction depth / parcel geometry / broker verification) with country + city overlays and search hints; editable in admin.", "version": "V2", "priority": "P1", "status": "prototype", "dependsOn": ["F-E0-01", "F-E10-01"], "reuses": ["api.policy", "ui.components"], "produces": [], "acceptance": ["users see availability before drilling in", "sales/support reference one catalog", "changes update UI without code"] },
+        { "id": "F-E10-03", "title": "Deliver pilot markets: Dubai, England/Wales, Singapore", "description": "Complete adapters + legal rules, tune transforms + confidence, validate search/filters/parcel/market pages, staging datasets + QA scorecards, internal beta.", "version": "V2", "priority": "P1", "status": "todo", "dependsOn": ["F-E3-03", "F-E7-04", "F-E10-02"], "reuses": ["ingest.marketAdapter"], "produces": [], "acceptance": ["all three markets work end-to-end", "each shows a different coverage level honestly", "pilot findings feed back into core"] },
+        { "id": "F-E10-04", "title": "Partner data integration framework", "description": "Partner ingestion patterns + contracts, partner license scopes + access flags, QA/mapping templates, partner-aware redaction + entitlements, onboarding docs.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E3-02", "F-E3-03", "F-E8-03"], "reuses": ["ingest.framework", "api.policy"], "produces": [], "acceptance": ["partner data ingested without breaking core", "entitlements + legal display partner-aware", "documented onboarding workflows"] },
+        { "id": "F-E10-05", "title": "Launch ops + post-launch iteration loops", "description": "Launch checklist (uptime, support docs, legal notices, attribution, analytics, alert delivery, backup validation), support playbooks, feedback tied to market pages/objects, monthly quality review.", "version": "V2", "priority": "P2", "status": "todo", "dependsOn": ["F-E9-01", "F-E10-03"], "reuses": ["obs.logging"], "produces": [], "acceptance": ["ops respond to quality/support issues fast", "launch quality measurable", "fixes feed back into rules + adapters"] }
+      ]
+    },
+    {
+      "id": "E11",
+      "name": "Market Intelligence",
+      "phase": "P2",
+      "goal": "Turn the data graph into forward market signal: forecasting, heat maps, scoring, and cycle detection.",
+      "features": [
+        { "id": "F-E11-01", "title": "Supply / demand forecasting", "description": "Forecast absorption, new-supply pipeline, and demand pressure per market/submarket with intervals.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E5-03", "F-E5-06"], "reuses": ["valuation.service", "scoring.confidence"], "produces": [], "acceptance": ["forecasts carry intervals", "backtested rolling error tracked"] },
+        { "id": "F-E11-02", "title": "Market heat maps + growth-corridor prediction", "description": "Cell-level heat layers for price/activity/growth and predicted appreciation corridors.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E2-03", "F-E11-01"], "reuses": ["geo.h3", "tiles.pipeline"], "produces": [], "acceptance": ["heat layers render on globe + market views", "corridor predictions explainable"] },
+        { "id": "F-E11-03", "title": "Investment scoring", "description": "Composite parcel/market opportunity scores tunable to a user thesis (value, momentum, risk-adjusted yield).", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E11-01", "F-E14-02"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["scores reweight to thesis", "drivers exposed for each score"] },
+        { "id": "F-E11-04", "title": "Liquidity, cycle phase, and benchmarks", "description": "Absorption/liquidity metrics, market-cycle phase detection, rent/yield benchmarking, capital-flow + gentrification signals.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E11-01"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["cycle phase labeled per market", "benchmarks comparable cross-market"] }
+      ]
+    },
+    {
+      "id": "E12",
+      "name": "Parcel Intelligence",
+      "phase": "P2",
+      "goal": "Deep, provenance-safe parcel knowledge: ownership graphs, encumbrances, rights, and history.",
+      "features": [
+        { "id": "F-E12-01", "title": "Ownership resolution + beneficial-owner graph", "description": "Resolve owners and corporate beneficial-owner chains with privacy/redaction per jurisdiction.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E4-03", "F-E4-06"], "reuses": ["api.policy"], "produces": [], "acceptance": ["ownership graph respects per-jurisdiction privacy", "redactions auditable"] },
+        { "id": "F-E12-02", "title": "Encumbrance, lien, and easement tracking", "description": "Track liens, mortgages, easements, and rights-of-way attached to parcels.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E12-01"], "reuses": ["db.schema"], "produces": [], "acceptance": ["encumbrances time-stamped + sourced", "shown on parcel dossier"] },
+        { "id": "F-E12-03", "title": "Legal-restriction extraction", "description": "Extract legal/contractual restrictions and covenants into structured fields with source citation.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E12-02", "F-E13-01"], "reuses": ["api.policy"], "produces": [], "acceptance": ["restrictions cite source text", "expert-validated where high-stakes"] },
+        { "id": "F-E12-04", "title": "Rights separation + assemblage detection", "description": "Separate surface/mineral/air/water rights; detect split/assemblage opportunities and adjacent-owner maps.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E12-01"], "reuses": ["geo.h3"], "produces": [], "acceptance": ["rights modeled distinctly", "assemblage candidates surfaced with confidence"] }
+      ]
+    },
+    {
+      "id": "E13",
+      "name": "Development Intelligence",
+      "phase": "P2",
+      "goal": "Make buildability machine-readable: zoning AI, permit probability, and feasibility.",
+      "features": [
+        { "id": "F-E13-01", "title": "Zoning-interpretation AI", "description": "LLM extraction of municipal ordinances into structured envelopes (use, FAR, height, setbacks) with citations and mandatory local-expert sign-off per market.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E4-06", "F-E18-01"], "reuses": ["api.policy", "scoring.confidence"], "produces": [], "acceptance": ["every extracted rule cites source text", "expert sign-off recorded per market", "corrections feed fine-tuning"] },
+        { "id": "F-E13-02", "title": "Buildable-envelope + highest-best-use", "description": "Compute buildable yield (units/GFA) from zoning envelope × terrain × constraints; rank highest-best-use.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E13-01"], "reuses": ["geo.h3"], "produces": [], "acceptance": ["yield computed per parcel", "constraints (slope/utilities/overlays) applied"] },
+        { "id": "F-E13-03", "title": "Permit-probability + entitlement-timeline prediction", "description": "Predict approval probability and entitlement duration from historical permit outcomes.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E13-01", "F-E5-04"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["predictions carry intervals", "validated against realized permit outcomes"] },
+        { "id": "F-E13-04", "title": "Feasibility + massing generation", "description": "Compose zoning, construction-cost indices, and exit-value forecasts into a feasibility view with auto-generated massing.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E13-02", "F-E14-04"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["feasibility composes cost + exit value", "massing respects envelope"] }
+      ]
+    },
+    {
+      "id": "E14",
+      "name": "Financial Intelligence",
+      "phase": "P2",
+      "goal": "Underwriting-grade financial tooling on top of valuations: cap rate, yield, DCF, and portfolio mark-to-model.",
+      "features": [
+        { "id": "F-E14-01", "title": "Cap-rate + yield analysis", "description": "Derive cap rates and yields from comps/transactions with market benchmarking.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E5-04"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["cap/yield computed with source comps", "benchmarked vs market"] },
+        { "id": "F-E14-02", "title": "ROI / IRR simulation + sensitivity", "description": "Scenario simulation of returns with sensitivity bands across key assumptions.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E14-01"], "reuses": [], "produces": [], "acceptance": ["scenarios produce ranges", "assumptions editable + saved"] },
+        { "id": "F-E14-03", "title": "Land-residual + DCF modeling", "description": "Land-residual valuation and DCF with debt sizing/LTV for development underwriting.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E14-02", "F-E13-02"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["DCF + residual reproducible", "debt sizing/LTV included"] },
+        { "id": "F-E14-04", "title": "Portfolio mark-to-model + revaluation", "description": "Continuous portfolio valuation and revaluation with climate-adjusted LTV for lenders.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E5-04", "F-E15-02"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["portfolios revalued continuously", "alerts on threshold breaches"] }
+      ]
+    },
+    {
+      "id": "E15",
+      "name": "Risk Intelligence",
+      "phase": "P2",
+      "goal": "Parcel-resolution, forward-looking physical and regulatory risk integrated into valuation.",
+      "features": [
+        { "id": "F-E15-01", "title": "Climate + physical hazard scores", "description": "Forward flood/fire/heat/drought/coastal/seismic/subsidence scores per parcel from fused satellite + climate-model data.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E4-04", "F-E16-02"], "reuses": ["geo.h3", "scoring.confidence"], "produces": [], "acceptance": ["forward (not historical) scores", "parcel-resolution where data allows", "intervals carried"] },
+        { "id": "F-E15-02", "title": "Climate-adjusted valuation + insurance scoring", "description": "Feed risk scores into valuation and an insurance-availability score; flag mispriced exposure.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E15-01", "F-E5-04"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["valuation reflects forward risk", "insurance-availability scored"] },
+        { "id": "F-E15-03", "title": "Political, regulatory, and title risk", "description": "Score regulatory/political risk and title/ownership risk; environmental-contamination flags.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E12-01"], "reuses": ["api.policy"], "produces": [], "acceptance": ["risk scores sourced + explainable", "title risk linked to ownership graph"] }
+      ]
+    },
+    {
+      "id": "E16",
+      "name": "Satellite Intelligence",
+      "phase": "P3",
+      "goal": "Detect physical change on Earth's land continuously as a data and signal source.",
+      "features": [
+        { "id": "F-E16-01", "title": "Imagery ingestion + change diffing", "description": "Ingest commercial + open imagery (Planet/Maxar/Sentinel/Landsat) and build change-over-time diffs.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E3-02"], "reuses": ["ingest.framework", "data.layers"], "produces": [], "acceptance": ["imagery snapshots + diffs stored with provenance", "redistribution limits enforced"] },
+        { "id": "F-E16-02", "title": "Construction + land-use change detection (CV)", "description": "CV models detecting construction starts, land-use change, vacant land, and impervious surface; analyst-verified flags via active learning.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E16-01", "F-E18-01"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["detections carry confidence", "analyst verification relabels training set"] },
+        { "id": "F-E16-03", "title": "Encroachment + environmental monitoring", "description": "Detect illegal builds/encroachment, vegetation/agriculture change, and post-disaster damage; solar/renewable suitability.", "version": "V5", "priority": "P3", "status": "todo", "dependsOn": ["F-E16-02"], "reuses": [], "produces": [], "acceptance": ["monitoring runs on cadence", "events feed alerts + government console"] }
+      ]
+    },
+    {
+      "id": "E17",
+      "name": "Infrastructure Intelligence",
+      "phase": "P3",
+      "goal": "Price the future: track infrastructure pipelines and model their land-value impact.",
+      "features": [
+        { "id": "F-E17-01", "title": "Infrastructure pipeline data layer", "description": "Track planned/funded/under-construction transit, roads, utilities, grid capacity, broadband/fiber, ports, and powered-land availability.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E3-02"], "reuses": ["ingest.framework"], "produces": [], "acceptance": ["pipeline projects geocoded + staged", "sources + freshness tracked"] },
+        { "id": "F-E17-02", "title": "Infrastructure-impact + proximity uplift model", "description": "Model expected land-value uplift per parcel from nearby projects; value-capture analysis.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E17-01", "F-E5-04"], "reuses": ["valuation.service", "geo.h3"], "produces": [], "acceptance": ["uplift predicted with intervals", "validated against post-completion realization"] }
+      ]
+    },
+    {
+      "id": "E18",
+      "name": "AI Copilot and Agents",
+      "phase": "P3",
+      "goal": "Provenance-grounded, human-supervised AI: a retrieval copilot, report generation, and autonomous agents.",
+      "features": [
+        { "id": "F-E18-01", "title": "Retrieval copilot platform (RAG over the land graph)", "description": "Natural-language Q&A grounded in the graph with mandatory citations; tool use; never invents parcels or unqualified numbers. Shared inference + guardrail layer reused by zoning AI and CV.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E6-01", "F-E4-05"], "reuses": ["api.policy", "scoring.confidence"], "produces": [], "acceptance": ["answers cite sources", "no un-provenanced claims", "eval suite + thumbs feedback wired"] },
+        { "id": "F-E18-02", "title": "Automated market/parcel reports + memo generation", "description": "Generate policy-safe market reports, parcel memos, and IC decks from the graph.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E18-01"], "reuses": ["api.policy"], "produces": [], "acceptance": ["reports respect legal display policy", "exports reproducible + sourced"] },
+        { "id": "F-E18-03", "title": "Deal-sourcing + research agents", "description": "Multi-step agents that source deals to a thesis and automate diligence checklists.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E18-01", "F-E11-03"], "reuses": [], "produces": [], "acceptance": ["agents produce sourced shortlists", "steps auditable"] },
+        { "id": "F-E18-04", "title": "Continuous-monitoring agents", "description": "Standing theses that run forever across countries, surfacing matches and anomalies with explanations.", "version": "V5", "priority": "P3", "status": "todo", "dependsOn": ["F-E18-03", "F-E21-05"], "reuses": ["alerts.changeDetection"], "produces": [], "acceptance": ["agents run continuously", "humans supervise; outputs explained + sourced"] },
+        { "id": "F-E18-05", "title": "Document / PDF extraction", "description": "Extract structured data from deeds, planning PDFs, and broker documents with citation back to the page.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E18-01"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["extractions cite source page", "low-confidence extractions flagged for review"] }
+      ]
+    },
+    {
+      "id": "E19",
+      "name": "Marketplace and Transactions",
+      "phase": "P3",
+      "goal": "Two-sided liquidity: verified listings, deal pipeline, transaction infrastructure, and the resulting data exhaust.",
+      "features": [
+        { "id": "F-E19-01", "title": "Verified listing marketplace", "description": "Bootstrap supply by giving brokers free tools in exchange for verified listings; discover + transact.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E8-03", "F-E6-04"], "reuses": ["api.policy"], "produces": [], "acceptance": ["verified listings discoverable", "supply seeded densely per launch market before expansion"] },
+        { "id": "F-E19-02", "title": "Deal pipeline / CRM", "description": "Inquiry → pipeline CRM with annotations, notes, and audit trail (extends existing inquiries).", "version": "V3", "priority": "P3", "status": "prototype", "dependsOn": ["F-E6-02"], "reuses": ["types.contracts"], "produces": [], "acceptance": ["users track deals through stages", "actions audited"] },
+        { "id": "F-E19-03", "title": "Transaction infrastructure + take-rate", "description": "Facilitate verified transactions with payments + take-rate accounting.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E19-01", "F-E9-04"], "reuses": ["api.auth"], "produces": [], "acceptance": ["transactions settle with audit", "take-rate metered + billed"] },
+        { "id": "F-E19-04", "title": "Marketplace data exhaust → graph", "description": "Feed marketplace activity (listings, closes) back into the canonical graph as proprietary comps/labels.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E19-03", "F-E5-06"], "reuses": ["data.layers", "alerts.changeDetection"], "produces": [], "acceptance": ["closed deals become proprietary comps", "labels sharpen valuation/ranking models"] }
+      ]
+    },
+    {
+      "id": "E20",
+      "name": "Data licensing, API platform, and indices",
+      "phase": "P2",
+      "goal": "Monetize the graph as a utility: bulk/metered API, licensing portal, indices, and embeds.",
+      "features": [
+        { "id": "F-E20-01", "title": "Public API platform + SDKs + developer portal", "description": "GA the versioned API with quotas, keys, docs, typed SDKs, and a self-serve developer portal.", "version": "V3", "priority": "P2", "status": "todo", "dependsOn": ["F-E6-01", "F-E9-04"], "reuses": ["api.router", "types.contracts"], "produces": [], "acceptance": ["external devs self-serve keys + quotas", "SDKs generated from contracts", "point-in-time-correct data for backtests"] },
+        { "id": "F-E20-02", "title": "Data licensing portal + clean rooms", "description": "Bulk data licensing with per-license scopes, entitlements, and partner clean-room arrangements.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E20-01", "F-E10-04"], "reuses": ["api.policy"], "produces": [], "acceptance": ["bulk licenses scoped + entitled", "clean rooms enforce data residency"] },
+        { "id": "F-E20-03", "title": "Globe Land Indices", "description": "Benchmark/index products (the 'S&P for land') licensed to funds, derived reproducibly from canonical data.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E5-03", "F-E11-04"], "reuses": ["scoring.confidence"], "produces": [], "acceptance": ["indices reproducible from canonical truth", "methodology published"] },
+        { "id": "F-E20-04", "title": "Embeddable widgets + white-label", "description": "Embeddable Globe maps/widgets and white-label deployments with role-based access + data-residency controls.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E6-02", "F-E7-02"], "reuses": ["ui.components", "api.auth"], "produces": [], "acceptance": ["widgets embeddable with scoped access", "white-label respects residency + RBAC"] }
+      ]
+    },
+    {
+      "id": "E21",
+      "name": "Platform scale (10M → 100M users)",
+      "phase": "P3",
+      "goal": "Scale the architecture along read, write, and inference axes: lakehouse, multi-region, streaming, ML platform, agent infra, planetary graph.",
+      "features": [
+        { "id": "F-E21-01", "title": "Lakehouse + CDC analytics", "description": "S3 + Iceberg/Delta lakehouse fed by CDC from Postgres as the analytical truth; all derived indexes reproducible.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E4-01", "F-E9-01"], "reuses": ["data.layers"], "produces": [], "acceptance": ["analytics run on lakehouse", "every derived store rebuildable from canonical Postgres"] },
+        { "id": "F-E21-02", "title": "Multi-region active-active + data residency", "description": "Region-partitioned, active-active deployment with per-jurisdiction data residency and sovereign isolated options.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E9-02", "F-E21-01"], "reuses": ["config.env"], "produces": [], "acceptance": ["writes survive a region loss", "residency enforced per jurisdiction"] },
+        { "id": "F-E21-03", "title": "Streaming backbone + processors", "description": "Kafka-class event mesh ingesting satellite/sensor/permit/market streams with stream processors for alerts + change detection.", "version": "V4", "priority": "P3", "status": "todo", "dependsOn": ["F-E3-02", "F-E6-05"], "reuses": ["alerts.changeDetection", "obs.logging"], "produces": [], "acceptance": ["near-real-time ingestion", "alerts driven from streams"] },
+        { "id": "F-E21-04", "title": "ML platform: feature store + model registry + retraining", "description": "Shared feature store, model registry, scheduled retraining, and autoscaling inference for AVM/risk/CV/copilot.", "version": "V3", "priority": "P3", "status": "todo", "dependsOn": ["F-E5-04", "F-E9-01"], "reuses": ["valuation.service"], "produces": [], "acceptance": ["models versioned + retrained on schedule", "inference autoscales"] },
+        { "id": "F-E21-05", "title": "Agent orchestration + eval/guardrail platform", "description": "Fleet orchestration for autonomous agents with safety evals and guardrails.", "version": "V5", "priority": "P3", "status": "todo", "dependsOn": ["F-E18-01", "F-E21-04"], "reuses": [], "produces": [], "acceptance": ["agents orchestrated at scale", "guardrails + evals gate deployment"] },
+        { "id": "F-E21-06", "title": "Planetary graph store + global H3 index", "description": "Graph DB + geospatial/H3 global index enabling planet-scale traversal and queries in seconds.", "version": "V5", "priority": "P3", "status": "todo", "dependsOn": ["F-E2-03", "F-E21-01"], "reuses": ["geo.h3"], "produces": [], "acceptance": ["global parcel graph queryable in seconds", "reproducible from canonical truth"] }
+      ]
+    }
+  ]
+}

@@ -1,232 +1,174 @@
-# Code Review & Audit Report
-**Date:** 2026-03-28
-**Repo:** Globe Land Intelligence (monorepo)
+# CLAUDE.md — Globe Engineering Guide
+
+**Repo:** Globe Land Intelligence (monorepo) · **Audience:** any coding agent or engineer working in this repo.
+
+This is the engineering law for building Globe from its current prototype to the worldwide land-intelligence platform. It tells you *how* to build. It deliberately does **not** enumerate the backlog — that lives in one place.
+
+## How the docs fit together (read in this order)
+
+1. **`claude.md`** (this file) — principles, architecture, DRY/reuse law, coding standards, definition of done, and the Phase 0 stabilization list.
+2. **`feature-list.json`** — the single machine-readable source of truth for the backlog: 23 epics / 111 features across V1–V5, every reusable module, dependencies, and acceptance criteria. **Pick work from here.**
+3. **`AGENTS.md`** — repo commands and architecture guardrails (authoritative for build/test commands).
+4. **`docs/worldwide_land_intelligence_codex_master_plan.md`** — the long-form rationale behind the foundation epics (E0–E10).
+5. **`docs/globe-future-state-analysis.md`** — the 5–10 year vision behind the advanced epics (E11–E21).
+
+> **DRY for docs too:** if a fact about the backlog belongs in `feature-list.json`, do not copy it here. Reference the feature id (e.g. `F-E4-06`). If a build command belongs in `AGENTS.md`, reference it, don't fork it.
 
 ---
 
-## Project Overview
+## 1. North star and product principles
 
-### Architecture
-A TypeScript/Node.js monorepo for a worldwide land-intelligence platform. Three deployed services communicate through a shared API:
+**Mission:** make every square meter of Earth legible — priced, understood, and tradable. **Product:** the Bloomberg Terminal for the physical world.
+
+Ten non-negotiable principles (from the master plan). Every feature must honor them:
+
+1. Never show one undifferentiated price — always separate `ask`, `closed`, `estimate`, `broker_verified`.
+2. Always show **freshness, source, and confidence** on every observable datum.
+3. Worldwide map first, market truth second, parcel truth last — enforce coverage tiers A/B/C; never imply parcel-level global coverage.
+4. At low zoom use aggregated cells; at high zoom use boundaries and listings.
+5. No market goes live until its legal display policy is documented and enforced.
+6. Do not depend on public OSM/demo tiles in production.
+7. Every market adapter defines units, currency, tenure, zoning mapping, freshness, and licensing.
+8. Every data source has lineage and a display policy.
+9. The UI explains uncertainty instead of hiding it.
+10. Keep Postgres/PostGIS as canonical truth; every derived index/search/tile/embedding must be reproducible from it.
+
+---
+
+## 2. Architecture and guardrails
 
 ```
-Globe (monorepo root, npm workspaces)
-├── apps/api/          — Raw Node.js HTTP API (port 4000), TypeScript, no framework
-├── apps/web/          — Next.js 15 user-facing app (port 3000), MapLibre GL 3D globe
-├── apps/admin/        — Next.js 15 operator dashboard (port 3001)
-├── packages/types/    — Shared domain types & enums (@globe/types)
-├── packages/geo/      — Geospatial utilities (@globe/geo)
-├── packages/config/   — Cross-service config (@globe/config)
-├── packages/ui/       — Shared React components (@globe/ui)
-├── services/ingestion/ — Python 3.11 ingestion pipeline (scaffold)
-├── services/valuation/ — Python 3.11 valuation model (scaffold)
-├── db/migrations/     — PostgreSQL + PostGIS schema
-└── infra/             — Docker, docker-compose, AWS App Runner, GitHub Actions CI/CD
+Globe (npm workspaces monorepo)
+├── apps/web/        Next.js user product (3D globe, MapLibre)        @globe/web
+├── apps/admin/      Next.js operator console                         @globe/admin
+├── apps/api/        Typed HTTP API (table-driven router)             @globe/api
+├── services/ingestion/  Python ETL / connector + market adapters
+├── services/valuation/  Python valuation / model service
+├── packages/types/  Domain enums, provenance, ALL DTOs              @globe/types
+├── packages/geo/    Geospatial math (coords, H3, distance, bbox)    @globe/geo
+├── packages/config/ Cross-service constants + env schema            @globe/config
+├── packages/ui/     Shared React components + design tokens         @globe/ui
+├── db/migrations/   PostGIS canonical schema
+├── infra/           Docker, compose, AWS, CI
+└── docs/            Plans, architecture, this analysis
 ```
 
-### Tech Stack
-- **API:** Raw Node.js HTTP, TypeScript 5.8, tsx runtime, ES2022, strict mode
-- **Frontend:** Next.js 15, React 18.3.1, MapLibre GL 5.3.0
-- **Auth:** Custom HMAC-SHA256 tokens (JWT-like, `payload.signature` format)
-- **Persistence:** File-based JSON (dev/staging), PostgreSQL + PostGIS schema (production-ready)
-- **Infrastructure:** Docker (alpine), AWS App Runner, ECR, OIDC federation, GitHub Actions
-- **Testing:** Node native test runner, 17 API tests (smoke + unit)
-
-### Data Flow
-1. User/operator authenticates via `POST /v1/auth/login` → receives HMAC-signed token
-2. Frontend (web/admin) stores token in sessionStorage, includes as `Authorization: Bearer`
-3. API validates token on every request, checks role for admin routes
-4. Data currently served from in-memory mock fixtures (`apps/api/src/data.ts`)
-5. User workspace (saved searches, watchlists, inquiries) persisted to JSON files
+**Guardrails (from `AGENTS.md`) — these are hard constraints:**
+- Enforce explicit coverage tiers A/B/C; never imply parcel-level global coverage.
+- Keep pricing states separated: `ask`, `closed`, `estimate`, `broker_verified`.
+- Preserve provenance on every observable object: source, observed_at, ingested_at, transform version, confidence.
+- Treat licensing/legal display policy as mandatory before market go-live.
+- Design for incremental market rollout; avoid hardcoding single-market assumptions.
+- Postgres/PostGIS is canonical; derived layers must be reproducible.
 
 ---
 
-## Bugs & Issues
+## 3. The DRY and reusability law (read before writing any code)
 
-### Critical
+**Build each capability exactly once, expose it from a shared module, and reuse it everywhere. Duplication is a defect that fails review.**
 
-- **[apps/api/src/handlers.ts:921-986]** — **`exportMemo` bypasses the legal display policy.** The `/v1/export/memo` endpoint calls `parcels.find()` directly from the raw data array without applying `maskParcelForPolicy`. A user can supply the ID of a parcel with `legalDisplayAllowed: false` and receive the full un-redacted data including `canonicalParcelId`, real area, zoning code, and actual price history. **Live-verified:** parcel `p-ldn-001` (London, `legalDisplayAllowed: false`) returns `Parcel ID: GB-LON-E14-42`, `Area: 1900`, `Zoning: CAZ-COM` via this endpoint. Fix: apply `maskParcelForPolicy` to each parcel before including it in the memo, and return a 403 if any resulting parcel is `canonicalParcelId === "REDACTED"`.
+`feature-list.json` → `conventions.reusableModules` is the catalog of the 24 canonical building blocks (id, path, responsibility, status, who reuses it). Before implementing anything:
 
-- **[apps/api/src/user-store.ts:47-49]** — **Password hashing uses SHA-256, not a password-hashing algorithm.** SHA-256 is a general-purpose digest function — it's extremely fast and makes offline brute-force attacks trivial. The entire `users` array is stored in a flat JSON file so a single read grants access to all salted hashes. Fix: replace with `bcrypt` (cost factor ≥ 12), `argon2id`, or `scrypt` via `node:crypto.scrypt`.
+1. Resolve every id in the feature's `reuses` array to its module and **extend that module** — never re-implement its responsibility inline.
+2. When you create a new shared capability, **register it** in `reusableModules` and list it in the feature's `produces`.
+3. Shared logic lives in a `package` or `service`, never copy-pasted into an app.
 
-- **[apps/api/src/user-store.ts:215-216]** — **Hash comparison with `!==` is timing-attack-vulnerable.** `if (attemptedHash !== user.passwordHash)` leaks timing information. Fix: use `timingSafeEqual` (already imported via `node:crypto` in auth.ts) after converting both hex strings to Buffers.
+**Concrete anti-duplication rules:**
 
-- **[apps/api/src/user-store.ts:27-29, intake-store.ts:11-13, review-store.ts:17-20]** — **Production store defaults to `/tmp/`.** All three JSON stores default to `/tmp/globe-*.json` in production. On AWS App Runner (and any container environment), `/tmp` is ephemeral and is wiped on every deployment or container restart. **All registered users, intake submissions, and review decisions will be silently lost.** The service starts fresh each deploy with no data. Fix: require `APP_USER_STORE_FILE` / `APP_INTAKE_STORE_FILE` / `APP_REVIEW_STORE_FILE` to be explicitly set in production, or (better) migrate to the PostgreSQL schema that already exists.
-
-- **[apps/api/src/auth.ts:46-61]** — **Token secret falls back to `APP_OPERATOR_PASSWORD`, then to an ephemeral in-memory random.** If `APP_AUTH_TOKEN_SECRET` is unset, the operator password becomes the signing secret — exposing one credential compromises both. If neither is set, a random secret is generated at startup and discarded on restart, invalidating all issued tokens. Fix: require `APP_AUTH_TOKEN_SECRET` to be set; fail fast at startup if it's missing in production (`NODE_ENV === 'production'`).
-
-### Major
-
-- **[apps/api/src/handlers.ts:673-674, 729-730]** — **User session TTL is hardcoded to 12 hours** (`1000 * 60 * 60 * 12`) while the operator TTL respects `APP_SESSION_TTL_MINUTES`. The env variable has no effect on user tokens. Fix: use `getSessionTtlMs()` (already exported from auth.ts) in the `login` and `register` handlers.
-
-- **[apps/api/src/handlers.ts:655-704]** — **User login has zero rate limiting.** The `login()` handler tries `authenticateUserAccount` first. If that returns `null`, it then calls `loginWithCredentials` (which is rate-limited). But if a registered user account exists for a given email, `loginWithCredentials` is never reached, so unlimited brute-force attempts are possible against user accounts. **Live-verified:** 20 consecutive failed login attempts with wrong password all return 401 — no 429 is ever issued. Fix: apply a parallel rate-limit map keyed on `clientKey` for user logins, or unify login paths before branching.
-
-- **[apps/api/src/user-store.ts:163-165, intake-store.ts:65-68, review-store.ts:59-62]** — **Synchronous `writeFileSync` on every mutation blocks the Node.js event loop.** All three stores call `writeFileSync` synchronously from within request handlers. Under any concurrent load this stalls all other pending I/O. Fix: use `writeFile` (async) with a queue/promise chain to serialise writes without blocking.
-
-- **[apps/api/src/user-store.ts, intake-store.ts]** — **No file-write locking; concurrent writes corrupt the store.** Two simultaneous POST requests both read the in-memory array, append, and write to disk. The second write overwrites the first — one record is lost. No mutex or write queue exists. Fix: use an async write queue (a single `Promise` chain) to serialize all writes.
-
-- **[apps/web/next.config.mjs:19]** — **CSP `connect-src` includes `http://localhost:4000` unconditionally** in both dev and production builds. This is a CSP misconfiguration — production pages allow connections to localhost. Fix: gate this behind `process.env.NODE_ENV === 'development'` just like the `unsafe-eval` directive above it.
-
-- **[apps/api/src/handlers.ts:179-218, 220-252]** — **No maximum string length on free-text fields.** Fields like `name`, `query`, `label`, `message`, `fullName`, `company`, `details` are validated for type and trimmed but have no upper-length bound. Combined with the 1 MB body limit, a single field like `details` could be ~1 MB of text written to the JSON store on every submission. Fix: add max-length guards (e.g. `name.length > 200`, `details.length > 4000`) in all parse helpers.
-
-- **[db/migrations/0001_init.sql:147]** — **`listing` table `price_state` CHECK constraint excludes `'closed'`.** The constraint is `CHECK (price_state IN ('ask', 'estimate', 'broker_verified'))` but `closed` is a valid enum member. Closed price records cannot be inserted into `listing`. (The intent is they go in `transaction`, but the constraint silently rejects valid data if code ever inserts a closed listing.) Fix: either add `'closed'` to the CHECK or add a comment making the intent explicit.
-
-- **[apps/api/src/handlers.ts:882-919]** — **`compareParcels` has no limit on input IDs.** `parseMultiValue(url, "parcelId")` already deduplicates, but nothing caps the total count. A request with 500 parcel IDs triggers 500 linear scans of the `listings` array for each. Fix: cap at a reasonable maximum (e.g. 20) and return 400 for excess.
-
-### Minor
-
-- **[apps/api/src/handlers.ts:160-162]** — **`sanitizeAlert` is a no-op.** The function just spreads the alert unchanged (`return { ...alert }`). It's called on line 574 but provides no actual sanitization. Remove it or add real field filtering.
-
-- **[apps/api/src/handlers.ts:145-158]** — **`maskParcelForPolicy` sets `center: { lng: 0, lat: 0 }` for restricted parcels.** Coordinates `0,0` are a real geographic location (equator/prime meridian) and a widely recognized "null island" sentinel. Clients could detect which parcels are restricted by checking for this coordinate. Fix: omit `center` from the response entirely for restricted parcels, or set it to the market centroid.
-
-- **[apps/web/components/globe-canvas.tsx:146]** — **`EMPTY_GRID_FILTER` typed as `any`.** `const EMPTY_GRID_FILTER: any = ["==", ["get", "gridId"], ""]`. Fix: use `maplibregl.FilterSpecification` or `unknown[]`.
-
-- **[apps/web/components/globe-canvas.tsx:152]** — **MapLibre font URL points to demo endpoint.** `glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf"` is the MapLibre demo tile server, not intended for production traffic. Fix: self-host glyphs or use a licensed tile provider URL.
-
-- **[apps/admin/app/page.tsx:116, 266]** — **`localStorage.removeItem` called with the `SESSION_STORAGE_KEY` name but token is only ever stored in `sessionStorage`.** The localStorage.removeItem calls are dead code. Fix: remove them.
-
-- **[apps/api/src/handlers.ts:302]** — **Email validation accepts strings with `@` anywhere, not valid emails.** `!email.includes("@")` catches `@` but not `a@` or `@b`. Same pattern in `parsePasswordResetPayload` (line 426), `parseIssueReportPayload` (line 405). Fix: use a minimal regex like `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` or a validation library.
-
-- **[apps/api/src/server.ts:78-80]** — **OPTIONS requests respond 204 without route resolution.** Any path receives a 204 for OPTIONS including `/v1/nonexistent`. This leaks CORS capability on non-existent routes. This is low risk but is technically misleading.
-
-- **[apps/api/src/user-store.ts:183]** — **Password minimum length checked after `trim()`** — `password.trim().length < 8`. A password of 8 spaces would be rejected (correct), but a password that is 8 chars with leading/trailing spaces has those stripped before the check. The hash is computed on the un-trimmed value though (`hashPassword(password, salt)` at line 198). This creates an inconsistency: if the user registers with `"  abc123  "` the length check passes on the trimmed value (6 chars) → weak_password rejection. This is actually OK but the trim() in the length check is misleading. Fix: remove the `.trim()` from the length check only (keep it consistent).
-
----
-
-## Testing Results
-
-| Feature/Flow | Status | Notes |
+| Concern | Single home | Rule |
 |---|---|---|
-| `GET /health` | ✅ | Returns `{status:"ok"}` correctly |
-| `GET /v1/markets` | ✅ | Filters, pagination, minConfidence all work |
-| `GET /v1/parcels` | ✅ | Legal-display masking works correctly for list endpoint |
-| `GET /v1/listings` | ✅ | State and market filters work |
-| `GET /v1/alerts` | ✅ | Market filter and activeOnly work |
-| `GET /v1/compare` | ✅ | Returns empty items array with no IDs |
-| `POST /v1/auth/register` | ✅ | Creates user, returns token |
-| `POST /v1/auth/login` (user) | ✅ | Returns token on success, 401 on fail |
-| `POST /v1/auth/login` (operator) | ⚠️ | Returns 503 when `APP_OPERATOR_EMAIL`/`APP_OPERATOR_PASSWORD` not set (expected) |
-| Operator rate limiting | ✅ | Triggers after 8 attempts in 10-min window |
-| User login rate limiting | ❌ | **Zero rate limiting on user accounts — 20+ failed attempts all return 401** |
-| `GET /v1/me` (auth required) | ✅ | Returns user; 401 without token |
-| Admin endpoints (role required) | ✅ | Returns 403 for user-role token |
-| `POST /v1/export/memo` | ❌ | **Bypasses legal display policy — returns real data for restricted parcels** |
-| Large body (>1MB) | ✅ | Returns 413 correctly |
-| Malformed JSON body | ✅ | Returns 400 correctly |
-| Unauthenticated protected route | ✅ | Returns 401 |
-| XSS in query param | ✅ | Reflected only in safe JSON context, no HTML render |
-| `GET /v1/brokers` | ✅ | Builds profile from listings correctly |
-| `POST /v1/intake/demo-requests` | ✅ | Persists and returns intake item |
-| `GET /v1/admin/intake` | ✅ (operator only) | Lists pending submissions |
-| Review decision flow | ✅ | Status updated and persisted |
+| Domain enums, provenance, DTOs | `@globe/types` (`types.domain`, `types.contracts`) | Apps import them. Re-declaring a DTO in `apps/web` or `apps/admin` is a build-blocking defect (the audit found exactly this — fix it). |
+| Geospatial math | `@globe/geo` (`geo.coords`, `geo.h3`) | No app computes coordinates/H3/distance inline. |
+| Constants + env validation | `@globe/config` (`config.constants`, `config.env`) | One typed env schema, validated at startup. |
+| Shared UI + tokens | `@globe/ui` (`ui.components`, `ui.tokens`) | Apps compose primitives; never re-style chips/badges/legends/drawers. |
+| HTTP plumbing | `api.router` | Endpoints are `RouteDefinition` entries; reuse `writeJson`, `statusResolver`, parse helpers. Never hand-roll CORS/headers/parsing per handler. |
+| Persistence | `api.store` | One durable store + async write-queue. The three file stores collapse into it. |
+| Legal display / provenance masking | `api.policy` | One adapter applied to every outbound object. No handler reads raw data arrays directly. |
+| Per-market behavior | `ingest.marketAdapter` | Behind the adapter interface; market code never leaks into core. |
+| Freshness/confidence scoring | `scoring.confidence` | One engine consumed by API, tiles, valuation, and UI. |
 
 ---
 
-## Missing / Gaps
+## 4. Coding standards
 
-### Security
-- [ ] No rate limiting on user account login (brute-force vector)
-- [ ] No rate limiting on `POST /v1/auth/register` (spam/enumeration vector)
-- [ ] Password hashing must be upgraded from SHA-256 to bcrypt/argon2
-- [ ] `APP_AUTH_TOKEN_SECRET` has no validation at startup — silently falls back to insecure defaults
-- [ ] `exportMemo` does not apply legal display policy (critical data policy gap)
-
-### Data Durability
-- [ ] All three JSON file stores default to `/tmp/` in production — data is destroyed on every deploy
-- [ ] No database connection layer — the existing PostgreSQL schema is never used by the API
-- [ ] No write-locking on JSON stores — concurrent requests can silently corrupt data
-- [ ] No backup or export mechanism for user data
-
-### Observability
-- [ ] No structured logging — only `process.stdout.write` on startup
-- [ ] No request logging (method, path, status, duration)
-- [ ] No error tracking (no Sentry, no CloudWatch integration)
-- [ ] No metrics (no Prometheus, no CloudWatch metrics)
-- [ ] Docker images have no `HEALTHCHECK` instruction — App Runner cannot health-check the container directly
-
-### Testing
-- [ ] No test for the `exportMemo` data-policy bypass (the critical bug above)
-- [ ] No test for user login brute-force (rate limiting gap)
-- [ ] No test for the `/tmp` production store path
-- [ ] No integration tests that start the actual HTTP server
-- [ ] No E2E tests (no Playwright/Cypress)
-- [ ] No tests for the web app components (React Testing Library)
-- [ ] No tests for admin page
-- [ ] Python services have only smoke tests; `valuation/main.py` is an empty scaffold
-
-### CI/CD
-- [ ] No lint/typecheck step in CI — the deploy workflows build and push without validating code quality
-- [ ] No test step in CI — tests never run in the pipeline
-- [ ] No staging environment or deployment gate between build and production push
-- [ ] `latest` tag is overwritten on every main branch push — no rollback tag strategy
-
-### Documentation
-- [ ] `.env.example` has no documentation for `APP_REVIEW_STORE_FILE`, `APP_USER_STORE_FILE`, `APP_INTAKE_STORE_FILE`
-- [ ] No API documentation (no OpenAPI/Swagger spec)
-- [ ] No documented process for how to swap file-based stores for PostgreSQL in production
-- [ ] No CHANGELOG or versioning strategy
-
-### Accessibility & Frontend
-- [ ] No `aria-label` on icon buttons in the globe UI
-- [ ] No keyboard navigation support for the 3D globe map selection
-- [ ] No `<noscript>` fallback — entire UI requires JavaScript
-- [ ] All DTOs are re-declared locally in `land-intelligence-app.tsx` and `admin/page.tsx` instead of importing from `@globe/types` or `@globe/api/contracts` — type drift risk
-
-### Infrastructure
-- [ ] No index on `listing(parcel_id)` in the database schema — parcel-level listing lookups will be full scans
-- [ ] No index on `source_observation(market_id)` — market-level observation queries will be slow
-- [ ] The `transaction` table uses a reserved SQL keyword as a table name (quoted as `"transaction"`) — error-prone in raw queries
+- **TypeScript:** strict mode, ES2022, no implicit `any`. Type at module boundaries; prefer `unknown` + narrowing over `any` (the audit found `EMPTY_GRID_FILTER: any` — fix).
+- **Security (mandatory, non-negotiable):** parameterized queries only; validate all input against allowlists (type, format, length, range); password hashing with Argon2id/scrypt/bcrypt (cost ≥ 12) — never SHA-256; constant-time comparisons for secrets; never log secrets/PII; fail securely (deny by default); rate-limit every auth/mutation endpoint; secrets via env/secret-manager, never hardcoded.
+- **Comments:** explain non-obvious intent, trade-offs, or constraints only. Never narrate what code does. Never describe a change in a comment.
+- **Errors:** generic messages to clients, detailed logs server-side; never leak stack traces.
+- **Tests:** every feature ships with tests (Node native test runner for TS; pytest for Python). New behavior is covered before it is "done".
+- **Files:** edit existing files over creating new ones; never create `.md` files unless explicitly requested; never touch `.github/`.
 
 ---
 
-## Future Improvements
+## 5. The build backlog → use `feature-list.json`
 
-### High Priority
+The backlog is **not** in this file. To choose and execute work:
 
-1. **Migrate stores to PostgreSQL.** The full schema already exists in `db/migrations/0001_init.sql`. The file-based stores are a single point of failure and will lose all data in production on every deploy. Priority: implement database connection pooling (pg/postgres.js) and port `user-store.ts`, `intake-store.ts`, `review-store.ts` to SQL.
+1. Open `feature-list.json`. Pick the lowest-`version`, highest-`priority` feature whose `dependsOn` are all `status: "done"`.
+2. **Phase 0 (`E-STABILIZE`) comes first** — the prototype is not safe for real users until those land (see §6).
+3. Read the feature's `reuses` and extend those modules (see §3).
+4. Satisfy every item in the feature's `acceptance`, then the global `definitionOfDone`.
+5. Update the feature `status` and register anything new in `reusableModules` / `produces`.
 
-2. **Upgrade password hashing.** Replace SHA-256 with `bcrypt` or `node:crypto.scrypt`. All existing hashed passwords must be re-hashed at next login (detect on login, re-hash and save on success). This is a required security fix before any real users sign up.
+Status values: `done` · `prototype` (exists on mock/file data — must be hardened) · `in_progress` · `todo` · `blocked`. Phases map to product versions: **P0→V1, P1→V2, P2→V3, P3→V4–V5.**
 
-3. **Fix the `exportMemo` policy bypass.** Apply `maskParcelForPolicy` to parcels in `exportMemo` and return an appropriate error for restricted parcels. This is a legal/policy compliance issue.
+---
 
-4. **Add rate limiting to user login and registration.** Apply the same `loginAttempts` map mechanism that already exists for operators. Consider a shared module so both paths use identical logic.
+## 6. Phase 0 — Known critical issues (fix before real users)
 
-5. **Add CI validation steps.** Before deploying, run `npm run typecheck && npm run lint && npm run test` in the GitHub Actions workflows. This prevents regressions from being silently deployed.
+These are the audit findings, preserved. Each maps to a feature in `feature-list.json` (epic `E-STABILIZE`). **No production launch with any Critical item open.**
 
-6. **Add startup validation for required env vars.** Fail fast in production if `APP_AUTH_TOKEN_SECRET`, `APP_OPERATOR_EMAIL`, `APP_OPERATOR_PASSWORD` are missing or still set to `.env.example` placeholder values.
+| Sev | Issue | Location | Fix | Feature |
+|---|---|---|---|---|
+| Critical | `exportMemo` bypasses legal display policy — returns un-redacted restricted parcels | `apps/api/src/handlers.ts:921-986` | Apply `maskParcelForPolicy`; 403 on any REDACTED parcel | F-STB-01 |
+| Critical | Passwords hashed with SHA-256 (fast digest) | `apps/api/src/user-store.ts:47-49` | Argon2id / scrypt; re-hash legacy on login | F-STB-02 |
+| Critical | Hash comparison with `!==` (timing attack) | `apps/api/src/user-store.ts:215-216` | `crypto.timingSafeEqual` over buffers | F-STB-03 |
+| Critical | Stores default to ephemeral `/tmp` in prod — data lost on deploy | `user-store.ts:27-29`, `intake-store.ts:11-13`, `review-store.ts:17-20` | Require store path/DB in prod; one durable store | F-STB-04 |
+| Critical | Token secret falls back to operator password / ephemeral random | `apps/api/src/auth.ts:46-61` | Require `APP_AUTH_TOKEN_SECRET`; fail fast in prod | F-STB-06 |
+| Major | User session TTL hardcoded to 12h (ignores env) | `handlers.ts:673-674, 729-730` | Use `getSessionTtlMs()` | F-STB-08 |
+| Major | User login has zero rate limiting (brute-force) | `handlers.ts:655-704` | Shared `clientKey` limiter on login + register | F-STB-07 |
+| Major | Synchronous `writeFileSync` blocks the event loop | three stores | Async serialized write-queue | F-STB-05 |
+| Major | No write-locking — concurrent writes corrupt the store | `user-store.ts`, `intake-store.ts` | Single-promise write queue | F-STB-05 |
+| Major | CSP `connect-src` allows `http://localhost:4000` in prod | `apps/web/next.config.mjs:19` | Gate behind `NODE_ENV === 'development'` | F-STB-10 |
+| Major | No max length on free-text fields (1MB writes) | `handlers.ts:179-252` | Max-length guards in parse helpers | F-STB-09 |
+| Major | `compareParcels` uncapped input ids | `handlers.ts:882-919` | Cap at 20; 400 on excess | F-STB-09 |
+| Major | `listing.price_state` CHECK excludes `'closed'` | `db/migrations/0001_init.sql:147` | Add `'closed'` or document intent | F-STB-10 |
+| Minor | `sanitizeAlert` is a no-op | `handlers.ts:160-162` | Implement or remove | F-STB-10 |
+| Minor | Masked parcels emit `center {0,0}` (detectable sentinel) | `handlers.ts:145-158` | Omit `center` or use market centroid | F-STB-10 |
+| Minor | MapLibre demo font/tile endpoint | `apps/web/components/globe-canvas.tsx:152` | Self-host glyphs/tiles | F-STB-10 |
+| Minor | `EMPTY_GRID_FILTER: any` | `globe-canvas.tsx:146` | Type as `FilterSpecification` | F-STB-10 |
+| Minor | Dead `localStorage.removeItem` (token is sessionStorage) | `apps/admin/app/page.tsx:116, 266` | Remove dead code | F-STB-10 |
+| Minor | Weak email validation (`includes('@')`) | `handlers.ts:302, 405, 426` | Minimal email regex | F-STB-09 |
+| Minor | `OPTIONS` returns 204 without route resolution | `apps/api/src/server.ts:78-80` | Resolve route before responding | F-STB-09 |
 
-### Medium Priority
+---
 
-7. **Add structured request logging.** Log every request with method, path, status code, duration, and a correlation ID. Use `pino` or a minimal structured logger. Without this, production debugging is nearly impossible.
+## 7. Definition of done
 
-8. **Respect `APP_SESSION_TTL_MINUTES` for user tokens.** Currently hardcoded to 12 hours in `handlers.ts`. Use the already-exported `getSessionTtlMs()` from auth.ts.
+Mirrors `feature-list.json` → `definitionOfDone`. A change is done only when:
 
-9. **Add a lint and typecheck step** to the CI pipeline (currently none exists). The deploy workflows build and push without any code validation.
+- Code is in the correct package/service (shared logic in a package, not an app) and every `reuses` module was extended, not duplicated.
+- `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` all pass.
+- Provenance + legal-display behavior is handled for any user-facing datum.
+- Tests/fixtures added; UI changes have screenshots; `docs/documentation.md` log updated.
+- Every `acceptance` item for the feature is verifiably true.
 
-10. **Cap `compareParcels` and `exportMemo` input sizes.** Max 20 parcel IDs for compare, max 10 for export memo. Return 400 for excess.
+A **market** is done only when its source/license is registered, adapter implemented + tested, QA green, coverage tier assigned, badges + trust metadata render, legal policy enforced, and a support owner exists.
 
-11. **Self-host MapLibre fonts/tiles.** Replace `https://demotiles.maplibre.org/font/...` with a self-hosted font endpoint. The demo server is not for production use.
+---
 
-12. **Fix CSP `connect-src` localhost in production.** Gate `http://localhost:4000` behind `process.env.NODE_ENV === 'development'`.
+## 8. Commands (authoritative list in `AGENTS.md`)
 
-13. **Import shared DTOs in frontend apps.** Both `apps/web/components/land-intelligence-app.tsx` and `apps/admin/app/page.tsx` re-declare all DTOs locally. Import from `@globe/types` or expose a `@globe/contracts` package to eliminate drift.
+```
+npm install            # install workspace deps
+npm run lint           # lint all workspaces
+npm run typecheck      # typecheck all workspaces
+npm run test           # run all tests
+npm run build          # build packages then apps
+npm run dev:web        # user app (port 3000)
+npm run dev:admin      # operator console (port 3001)
+npm run dev:api        # API (port 4000)
+```
 
-14. **Add Docker HEALTHCHECK instructions** to all three Dockerfiles so App Runner and orchestrators can detect unhealthy containers without a separate probe.
+Always run `lint`, `typecheck`, and `test` before claiming a feature is complete — evidence before assertions.
 
-### Low Priority
-
-15. **Remove the `sanitizeAlert` no-op.** Either implement actual field filtering or remove the function and call directly.
-
-16. **Fix `center: {lng:0,lat:0}` in masked parcels.** Use the market centroid or omit the field for restricted parcels.
-
-17. **Add database missing indexes:** `listing(parcel_id)`, `source_observation(market_id)`.
-
-18. **Rename the `transaction` SQL table.** Using a reserved keyword requires quoting everywhere and is error-prone. Consider `land_transaction` or `closed_transaction`.
-
-19. **Clarify `listing.price_state` CHECK constraint.** Either add `'closed'` or add a code comment explaining why it's excluded.
-
-20. **Remove dead `localStorage.removeItem` calls** in `apps/admin/app/page.tsx` (lines 116, 266).
-
-21. **Add `aria-label` and keyboard navigation** to the globe canvas interactive controls for WCAG compliance.
-
-22. **Add email format validation** beyond simple `.includes("@")` in demo request, issue report, and password reset handlers.

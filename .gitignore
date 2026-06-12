@@ -19,3 +19,6 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .vscode/
+
+# ingestion artifact zones (raw/silver/state are runtime data, never committed)
+services/ingestion/data/
