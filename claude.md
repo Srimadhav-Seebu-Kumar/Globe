@@ -42,7 +42,7 @@ Globe (npm workspaces monorepo)
 ├── apps/web/        Next.js user product (3D globe, MapLibre)        @globe/web
 ├── apps/admin/      Next.js operator console                         @globe/admin
 ├── apps/api/        Typed HTTP API (table-driven router)             @globe/api
-├── services/ingestion/  Python ETL / connector + market adapters
+├── services/ingestion/  Python ETL — registry + connectors → bronze/silver (see F-E3-02)
 ├── services/valuation/  Python valuation / model service
 ├── packages/types/  Domain enums, provenance, ALL DTOs              @globe/types
 ├── packages/geo/    Geospatial math (coords, H3, distance, bbox)    @globe/geo
@@ -61,13 +61,19 @@ Globe (npm workspaces monorepo)
 - Design for incremental market rollout; avoid hardcoding single-market assumptions.
 - Postgres/PostGIS is canonical; derived layers must be reproducible.
 
+**Ingestion + read path (current prototype, `F-E3-02` / `F-E3-04`):**
+- **Single registry:** `services/ingestion/src/ingestion/registry.py` — nothing ingestible without an entry (license, attribution, fallback chain, coverage tier).
+- **Pipeline:** pull → raw snapshot + checksum → parse → normalize → QA → silver JSONL under `services/ingestion/data/` (gitignored).
+- **API bridge (prototype):** `api.ingestRead` (`silver-store.ts`, `silver-gold.ts`, `data-layer.ts`) merges latest silver with mock `data.ts` when `GLOBE_INGEST_DATA_DIR` is set. This is **not** canonical — Postgres gold (`F-E4-01`) replaces it.
+- **Value zones:** official parcel/cell/district references must surface as `price_state: estimate` with provenance; never imply global parcel coverage (tiers A/B/C).
+
 ---
 
 ## 3. The DRY and reusability law (read before writing any code)
 
 **Build each capability exactly once, expose it from a shared module, and reuse it everywhere. Duplication is a defect that fails review.**
 
-`feature-list.json` → `conventions.reusableModules` is the catalog of the 24 canonical building blocks (id, path, responsibility, status, who reuses it). Before implementing anything:
+`feature-list.json` → `conventions.reusableModules` is the catalog of the **25** canonical building blocks (id, path, responsibility, status, who reuses it). Before implementing anything:
 
 1. Resolve every id in the feature's `reuses` array to its module and **extend that module** — never re-implement its responsibility inline.
 2. When you create a new shared capability, **register it** in `reusableModules` and list it in the feature's `produces`.
@@ -85,6 +91,7 @@ Globe (npm workspaces monorepo)
 | Persistence | `api.store` | One durable store + async write-queue. The three file stores collapse into it. |
 | Legal display / provenance masking | `api.policy` | One adapter applied to every outbound object. No handler reads raw data arrays directly. |
 | Per-market behavior | `ingest.marketAdapter` | Behind the adapter interface; market code never leaks into core. |
+| Ingested data → API DTOs | `api.ingestRead` | Read silver JSONL, map to DTOs, merge in `data-layer.ts`. Handlers never parse JSONL inline. |
 | Freshness/confidence scoring | `scoring.confidence` | One engine consumed by API, tiles, valuation, and UI. |
 
 ---

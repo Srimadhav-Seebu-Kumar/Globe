@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .models import NormalizedTransaction, QAIssue, QAReport, QASeverity
+from .models import NormalizedTransaction, NormalizedValueZone, QAIssue, QAReport, QASeverity, SilverRecord
+
+SilverRecordType = NormalizedTransaction | NormalizedValueZone
 
 # A land/property price of zero or below is always a parse error; values above
 # this ceiling are treated as outliers to warn on (national-record territory).
@@ -34,9 +36,15 @@ def _is_valid_date(value: str) -> bool:
     return datetime(1900, 1, 1, tzinfo=timezone.utc) <= parsed <= now
 
 
-def validate_records(records: list[NormalizedTransaction]) -> tuple[list[NormalizedTransaction], QAReport]:
+def _record_amount(record: SilverRecord) -> int:
+    if isinstance(record, NormalizedValueZone):
+        return record.value_per_sqm
+    return record.amount
+
+
+def validate_records(records: list[SilverRecordType]) -> tuple[list[SilverRecordType], QAReport]:
     """Return (accepted_records, report). Caller must check report.has_hard_failures."""
-    accepted: list[NormalizedTransaction] = []
+    accepted: list[SilverRecordType] = []
     issues: list[QAIssue] = []
 
     if not records:
@@ -61,22 +69,23 @@ def validate_records(records: list[NormalizedTransaction]) -> tuple[list[Normali
                 )
                 record_ok = False
 
-        if record.amount < MIN_VALID_AMOUNT:
+        amount = _record_amount(record)
+        if amount < MIN_VALID_AMOUNT:
             issues.append(
                 QAIssue(
                     rule="price_sanity",
                     severity=QASeverity.SOFT_WARN,
-                    message=f"non-positive amount {record.amount}",
+                    message=f"non-positive amount {amount}",
                     record_id=record.record_id,
                 )
             )
             record_ok = False
-        elif record.amount > SOFT_MAX_AMOUNT:
+        elif amount > SOFT_MAX_AMOUNT:
             issues.append(
                 QAIssue(
                     rule="price_outlier",
                     severity=QASeverity.SOFT_WARN,
-                    message=f"amount {record.amount} above outlier ceiling",
+                    message=f"amount {amount} above outlier ceiling",
                     record_id=record.record_id,
                 )
             )

@@ -25,7 +25,9 @@ from .models import (
     JobResult,
     JobStatus,
     NormalizedTransaction,
+    NormalizedValueZone,
     RawArtifact,
+    SilverRecord,
     utc_now_iso,
 )
 from .qa import validate_records
@@ -44,7 +46,7 @@ class Connector(Protocol):
         """Pull raw payload(s) from the source. Network happens only here."""
         ...
 
-    def parse(self, artifacts: list[RawArtifact]) -> list[NormalizedTransaction]:
+    def parse(self, artifacts: list[RawArtifact]) -> list[SilverRecord]:
         """Turn raw bytes into normalized records. Must be pure (no network)."""
         ...
 

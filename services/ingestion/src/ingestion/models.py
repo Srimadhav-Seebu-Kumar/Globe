@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class PriceState(str, Enum):
@@ -58,6 +58,55 @@ class ProvenanceStamp:
         return asdict(self)
 
 
+@runtime_checkable
+class SilverRecord(Protocol):
+    """Anything publishable to the silver JSONL layer."""
+
+    record_id: str
+
+    def to_dict(self) -> dict[str, Any]: ...
+
+
+@dataclass(slots=True)
+class NormalizedValueZone:
+    """Official per-area land value (zone or reference point), not a transaction."""
+
+    record_id: str
+    source_record_id: str
+    market_code: str
+    country_code: str
+    value_per_sqm: int
+    currency_code: str
+    observed_at: str
+    freshness: FreshnessTier
+    confidence: ConfidenceLabel
+    provenance: ProvenanceStamp
+    zone_name: str = ""
+    geometry: dict[str, Any] = field(default_factory=dict)
+    address: dict[str, str] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_kind": "value_zone",
+            "record_id": self.record_id,
+            "source_record_id": self.source_record_id,
+            "market_code": self.market_code,
+            "country_code": self.country_code,
+            "value_per_sqm": self.value_per_sqm,
+            "currency_code": self.currency_code,
+            "price_state": PriceState.ESTIMATE.value,
+            "observed_at": self.observed_at,
+            "freshness": self.freshness.value,
+            "confidence": self.confidence.value,
+            "provenance": self.provenance.to_dict(),
+            "zone_name": self.zone_name,
+            "geometry": self.geometry,
+            "address": self.address,
+            "attributes": self.attributes,
+        }
+
+
 @dataclass(slots=True)
 class NormalizedTransaction:
     """A single closed/ask price observation in canonical form (silver layer)."""
@@ -78,6 +127,7 @@ class NormalizedTransaction:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["record_kind"] = "transaction"
         payload["price_state"] = self.price_state.value
         payload["freshness"] = self.freshness.value
         payload["confidence"] = self.confidence.value

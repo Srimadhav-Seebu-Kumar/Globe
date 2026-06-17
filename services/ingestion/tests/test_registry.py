@@ -22,7 +22,7 @@ def test_every_fallback_target_is_registered() -> None:
 
 def test_transaction_sources_have_fallbacks() -> None:
     for definition in REGISTRY.values():
-        if definition.kind == "transactions":
+        if definition.kind in ("transactions", "value_zones"):
             assert definition.fallback_chain, f"{definition.code} has no fallback chain"
 
 
@@ -78,6 +78,15 @@ def test_skipped_unchanged_counts_as_healthy(tmp_path: Path) -> None:
     active, reason = resolve_active_source("uk-hmlr-ppd", store, now)
     assert active.code == "uk-hmlr-ppd"
     assert reason == "primary healthy"
+
+
+def test_value_zone_sources_registered() -> None:
+    zones = [d for d in REGISTRY.values() if d.kind == "value_zones"]
+    assert len(zones) >= 10
+    implemented = [d.code for d in zones if d.connector_implemented]
+    assert "jp-mlit-koji" in implemented
+    assert "de-nrw-boris" in implemented
+    assert "tw-moi-land-stats" in implemented
 
 
 def test_unknown_source_raises() -> None:

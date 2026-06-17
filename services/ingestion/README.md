@@ -32,12 +32,27 @@ never publish), retry with backoff on transient network errors.
 |---|---|---|---|---|
 | `uk-hmlr-ppd` | England & Wales transactions | monthly | OGL v3 (attribution required) | optional `HMLR_PPD_URL` |
 | `kr-molit-land` | Korea land transactions | daily | data.go.kr (free key) | `MOLIT_API_KEY`, optional `MOLIT_LAWD_CD`, `MOLIT_DEAL_YMD` |
+| `jp-mlit-koji` | Japan official land price points (¥/m²) | semiannual | KSJ CC BY 4.0 | optional `JP_KOJI_YEAR`, `JP_KOJI_PREF` (default 26/13 Tokyo) |
+| `de-nrw-boris` | Germany NRW Bodenrichtwerte zones (€/m²) | semiannual | dl-de/zero-2.0 | optional `DE_NRW_BRW_URL` (~216MB shapefile) |
+| `tw-moi-land-stats` | Taiwan county announced land values | semiannual | Taiwan OGDL | — |
+| `tw-taipei-land-price` | Taipei parcel 公告現值/公告地價 (TWD/m²) | semiannual | Taipei OGDL | optional `TAIPEI_LAND_RID`, `TAIPEI_LAND_MAX_ROWS`, `TAIPEI_LAND_YEAR` |
+| `cz-csu-avg-prices` | Czech district average property prices | semiannual | data.gov.cz open | `CZ_CSU_CSV_URL` (NKOD distribution) |
+| `global-bis-rppi` | BIS global residential price index | quarterly | BIS terms | terminal fallback (~244 country series) |
 
 Fallback chains and required attribution strings live in `registry.py`;
 nothing is ingestible without a registry entry. The registry also catalogs
-14 additional live-verified sources (FR, IE, TW, SG, AU-NSW, JP, AE-Dubai,
-US-CT, US-NYC, EE, DE-NRW, IT, US-FHFA, CA, HK) awaiting connectors —
-run `python -m ingestion.main list` for the full catalog.
+**15 official value-zone sources** (Germany BORIS states, Japan 地価公示, Taiwan,
+Switzerland cantons, NL WOZ, etc.) — run `python -m ingestion.main list` and
+filter for `value_zones`. Registry now lists **37 sources** including Belgium
+CadGIS (registered), Hong Kong RVD indices, Italy OMI, and Taichung parcels.
+
+## API silver overlay
+
+The API reads the latest `silver/<source>/*.jsonl` when present and merges
+ingested records with mock fixtures (`apps/api/src/data-layer.ts`). Set
+`GLOBE_INGEST_DATA_DIR` to the ingestion data root and optionally
+`GLOBE_SILVER_MAX_RECORDS` (default 10,000 per source). Disable with
+`GLOBE_USE_INGEST_DATA=false`.
 
 ## Usage
 

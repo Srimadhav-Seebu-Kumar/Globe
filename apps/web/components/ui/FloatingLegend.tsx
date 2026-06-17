@@ -1,6 +1,11 @@
 "use client";
 
+import { forwardRef, useImperativeHandle, useState } from "react";
 import type { GlobeMetric } from "./MetricToggle";
+
+export interface FloatingLegendHandle {
+  setRange: (min: number, max: number) => void;
+}
 
 interface FloatingLegendProps {
   metric: GlobeMetric;
@@ -43,14 +48,40 @@ const metricConfig: Record<GlobeMetric, {
   }
 };
 
-function formatValue(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
-  return `${value}`;
+function formatValue(value: number, metric: GlobeMetric): string {
+  if (metric === "activity") {
+    if (value >= 100) return `${Math.round(value)} obs`;
+    return `${Math.round(value)}`;
+  }
+  if (metric === "confidence") {
+    return value >= 0.75 ? "High" : value >= 0.45 ? "Mid" : "Low";
+  }
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K/sqft`;
+  return `$${Math.round(value)}/sqft`;
 }
 
-export function FloatingLegend({ metric, minValue, maxValue, className = "" }: FloatingLegendProps) {
+export const FloatingLegend = forwardRef<FloatingLegendHandle, FloatingLegendProps>(function FloatingLegend(
+  { metric, minValue: minValueProp, maxValue: maxValueProp, className = "" },
+  ref
+) {
+  const [localRange, setLocalRange] = useState<{ min?: number; max?: number }>({});
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setRange: (min: number, max: number) => {
+        setLocalRange((previous) =>
+          previous.min === min && previous.max === max ? previous : { min, max }
+        );
+      }
+    }),
+    []
+  );
+
   const config = metricConfig[metric];
+  const showNumericRange = metric === "ask" || metric === "closed";
+  const minValue = minValueProp ?? localRange.min;
+  const maxValue = maxValueProp ?? localRange.max;
 
   return (
     <div
@@ -71,12 +102,12 @@ export function FloatingLegend({ metric, minValue, maxValue, className = "" }: F
       />
       <div className="flex justify-between items-center">
         <span className="text-[10px] text-[var(--text-tertiary)]">
-          {minValue !== undefined ? formatValue(minValue) : config.lowLabel}
+          {minValue !== undefined && showNumericRange ? formatValue(minValue, metric) : config.lowLabel}
         </span>
         <span className="text-[10px] text-[var(--text-tertiary)]">
-          {maxValue !== undefined ? formatValue(maxValue) : config.highLabel}
+          {maxValue !== undefined && showNumericRange ? formatValue(maxValue, metric) : config.highLabel}
         </span>
       </div>
     </div>
   );
-}
+});

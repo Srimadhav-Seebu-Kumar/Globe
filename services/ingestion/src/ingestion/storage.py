@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
-from .models import JobResult, NormalizedTransaction, RawArtifact, utc_now_iso
+from .models import JobResult, NormalizedTransaction, NormalizedValueZone, RawArtifact, SilverRecord, utc_now_iso
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -76,7 +76,7 @@ class ArtifactStore:
 
     # -- silver ---------------------------------------------------------
 
-    def publish_silver(self, source_code: str, run_id: str, records: Iterable[NormalizedTransaction]) -> tuple[Path, int]:
+    def publish_silver(self, source_code: str, run_id: str, records: Iterable[SilverRecord]) -> tuple[Path, int]:
         """Write normalized records as JSONL; returns (path, count)."""
         lines: list[str] = []
         for record in records:

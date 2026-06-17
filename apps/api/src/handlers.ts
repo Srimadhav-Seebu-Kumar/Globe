@@ -26,7 +26,14 @@ import type {
   UserDto,
   WatchlistItemDto
 } from "./contracts.js";
-import { activityEvents, alerts, listings, markets, parcels, sourceHealthRows } from "./data.js";
+import {
+  activityEvents,
+  alerts,
+  listings as loadListings,
+  markets as loadMarkets,
+  parcels as loadParcels,
+  sourceHealthRows as loadSourceHealthRows
+} from "./data-layer.js";
 import {
   createIntakeSubmission,
   listIntakeSubmissions as listPersistedIntakeSubmissions,
@@ -354,7 +361,7 @@ const parseListingSubmissionPayload = (body: unknown): {
   const state =
     typeof payload.state === "string" && priceStateSet.has(payload.state) ? (payload.state as PriceState) : "ask";
 
-  const marketExists = markets.some((market) => market.id === marketId);
+  const marketExists = loadMarkets().some((market) => market.id === marketId);
   if (!marketExists || !title || !listingReference || !sourceName || !Number.isFinite(amount) || amount <= 0) {
     return null;
   }
@@ -443,7 +450,7 @@ export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
   const windowDays = parseWindowDays(url);
 
   const marketStateMap = new Map<string, Set<PriceState>>();
-  for (const listing of listings) {
+  for (const listing of loadListings()) {
     if (!withinWindow(listing.observedAt, windowDays)) {
       continue;
     }
@@ -455,7 +462,7 @@ export const listMarkets = (url: URL): CollectionResponse<MarketDto> => {
     marketStateMap.get(listing.marketId)?.add(listing.state);
   }
 
-  const filtered = markets
+  const filtered = loadMarkets()
     .filter((market) => {
       if (query && !`${market.name} ${market.slug} ${market.countryCode} ${market.region}`.toLowerCase().includes(query)) {
         return false;
@@ -496,7 +503,7 @@ export const listParcels = (url: URL) => {
   const legalDisplayOnlyRaw = url.searchParams.get("legalDisplayOnly");
   const legalDisplayOnly = legalDisplayOnlyRaw === null ? true : legalDisplayOnlyRaw === "true";
 
-  const filtered = parcels.filter((parcel) => {
+  const filtered = loadParcels().filter((parcel) => {
     if (marketId && parcel.marketId !== marketId) {
       return false;
     }
@@ -528,7 +535,7 @@ export const listListings = (url: URL) => {
   const states = parsePriceStates(url);
   const windowDays = parseWindowDays(url);
 
-  const filtered = listings
+  const filtered = loadListings()
     .filter((listing) => {
       if (marketId && listing.marketId !== marketId) {
         return false;
@@ -583,7 +590,7 @@ export const listAlerts = (url: URL) => {
 export const listSourceHealth = (url: URL) => {
   const statusFilter = parseMultiValue(url, "status");
 
-  const filtered = sourceHealthRows.filter((row) => {
+  const filtered = loadSourceHealthRows().filter((row) => {
     if (statusFilter.length > 0 && !statusFilter.includes(row.status)) {
       return false;
     }
@@ -795,7 +802,7 @@ export const listUserAlerts = (url: URL, session?: AuthSession): CollectionRespo
   const activeOnly = url.searchParams.get("activeOnly") !== "false";
   const watchlistItems = listWatchlistItemsForUser(requiredSession.userId);
 
-  const parcelToMarket = new Map(parcels.map((parcel) => [parcel.id, parcel.marketId]));
+  const parcelToMarket = new Map(loadParcels().map((parcel) => [parcel.id, parcel.marketId]));
   const linkedAlerts: UserAlertDto[] = [];
 
   for (const item of watchlistItems) {
@@ -837,7 +844,7 @@ export const listBrokerProfiles = (url: URL): CollectionResponse<BrokerProfileDt
   const marketId = url.searchParams.get("marketId");
   const brokerMap = new Map<string, BrokerProfileDto>();
 
-  for (const listing of listings) {
+  for (const listing of loadListings()) {
     if (!listing.brokerName) {
       continue;
     }
@@ -882,13 +889,13 @@ export const listBrokerProfiles = (url: URL): CollectionResponse<BrokerProfileDt
 
 export const compareParcels = (url: URL): CompareResponseDto => {
   const parcelIds = parseMultiValue(url, "parcelId");
-  const marketById = new Map(markets.map((market) => [market.id, market]));
+  const marketById = new Map(loadMarkets().map((market) => [market.id, market]));
 
   const items = parcelIds
-    .map((parcelId) => parcels.find((parcel) => parcel.id === parcelId))
+    .map((parcelId) => loadParcels().find((parcel) => parcel.id === parcelId))
     .filter((parcel): parcel is ParcelDto => Boolean(parcel))
     .map((parcel) => {
-      const parcelListings = listings.filter((listing) => listing.parcelId === parcel.id);
+      const parcelListings = loadListings().filter((listing) => listing.parcelId === parcel.id);
       const sortedListings = [...parcelListings].sort((left, right) => +new Date(right.observedAt) - +new Date(left.observedAt));
       const latestListing = sortedListings[0] ?? null;
       const averageObservedAmount =
@@ -930,7 +937,7 @@ export const exportMemo = (body: unknown): ExportMemoDto | { error: string } => 
 
   const selectedParcels = payload.parcelIds
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((parcelId) => parcels.find((parcel) => parcel.id === parcelId))
+    .map((parcelId) => loadParcels().find((parcel) => parcel.id === parcelId))
     .filter((parcel): parcel is ParcelDto => Boolean(parcel));
 
   if (selectedParcels.length === 0) {
@@ -945,8 +952,8 @@ export const exportMemo = (body: unknown): ExportMemoDto | { error: string } => 
   lines.push("");
 
   for (const parcel of selectedParcels) {
-    const market = markets.find((candidate) => candidate.id === parcel.marketId);
-    const parcelListings = listings
+    const market = loadMarkets().find((candidate) => candidate.id === parcel.marketId);
+    const parcelListings = loadListings()
       .filter((listing) => listing.parcelId === parcel.id)
       .sort((left, right) => +new Date(right.observedAt) - +new Date(left.observedAt));
     const latest = parcelListings[0] ?? null;
@@ -1002,7 +1009,7 @@ export const createInquiry = (
     return { ok: false, error: "Invalid inquiry payload" };
   }
 
-  const listing = listings.find((item) => item.id === parsed.listingId);
+  const listing = loadListings().find((item) => item.id === parsed.listingId);
   if (!listing) {
     return { ok: false, error: "Listing not found" };
   }
